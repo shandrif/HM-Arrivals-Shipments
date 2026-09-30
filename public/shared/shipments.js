@@ -20,26 +20,40 @@
     if (typeof v === 'number') return Math.floor(v - 25569) * DAY; // Excel serial date
     const s = String(v).trim();
     if (!s || /^nan$/i.test(s) || s === '-') return null;
-    let m = s.match(/^(\d{1,2})[ \-\/]([A-Za-z]{3})[A-Za-z]*[ \-\/,]*(\d{4})$/);
+    const yr = y => (String(y).length === 2 ? 2000 + +y : +y);
+    let m = s.match(/^(\d{1,2})[ \-\/]([A-Za-z]{3})[A-Za-z]*[ \-\/,]*(\d{2}|\d{4})$/);
     if (m) {
       const mi = MONTHS.findIndex(x => x.toLowerCase() === m[2].toLowerCase());
-      if (mi >= 0) return Date.UTC(+m[3], mi, +m[1]);
+      if (mi >= 0) return Date.UTC(yr(m[3]), mi, +m[1]);
     }
     m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
     if (m) return Date.UTC(+m[1], +m[2] - 1, +m[3]);
     m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-    if (m) return Date.UTC(+m[3], +m[2] - 1, +m[1]);
+    if (m) { // month/day/year (as exported from Excel); day/month/year when the first number cannot be a month
+      const a = +m[1], b = +m[2];
+      return a > 12 ? Date.UTC(+m[3], b - 1, a) : Date.UTC(+m[3], a - 1, b);
+    }
     return null;
   }
   function todayTs() {
     const n = new Date();
     return Date.UTC(n.getFullYear(), n.getMonth(), n.getDate());
   }
+  function isDateText(s) { return toTs(String(s).trim()) != null && !/[A-Za-z]{4,}/.test(String(s)); }
+  const CATEGORY_RULES = [
+    ['Packaging', /(CUP|NAPKIN|BAG|BOX|FILTER|VALVE|PACK|SLEEVE|LID|STRAW|CARTON)/i],
+    ['Food', /(BEANS|MILK|MATCHA|TEA\b|COFFEE SACHET|SACHET|CORN FLAKES|PREMIX|COFFEE\b)/i],
+    ['Merchandise', /(MUG|STANLEY|BOTTLE|TUMBLER)/i]
+  ];
+  function inferCategory(items) {
+    for (const [cat, re] of CATEGORY_RULES) if (re.test(items)) return cat;
+    return 'Others';
+  }
   function cleanRemark(v) {
     if (v == null) return '';
     if (typeof v === 'number') return v > 30000 ? '' : String(v); // a date cell, not a note
     const s = String(v).trim();
-    return /^nan$/i.test(s) ? '' : s;
+    return /^nan$/i.test(s) || isDateText(s) ? '' : s; // a bare date is not a note
   }
 
   /* Raw row -> display row with status and projected arrival. */
@@ -63,7 +77,7 @@
       Terms: r.Terms || '', CNTR: r.CNTR || '', BL: r.BL ? String(r.BL).trim() : '',
       ETD: fmtTs(etd), ETA: fmtTs(eta), _etd: etd, _eta: eta,
       POD: String(r.POD || '').trim(), Status: status, ProjectedArrival: projected,
-      Remarks: /^\d{4}-\d{2}-\d{2}/.test(rem) ? '' : rem
+      Remarks: rem
     };
   }
 
@@ -75,11 +89,12 @@
       const o = {};
       Object.keys(row).forEach(k => { o[k.trim().toLowerCase()] = row[k]; });
       const items = String(o.items || '').replace(/\|\s*$/, '').trim();
-      if (!items && !String(o.supplier || '').trim()) return;
+      if (!items) return; // month labels, #REF! and stray number rows have no item
       const bl = o.bl == null || /^nan$/i.test(String(o.bl)) ? '' : String(o.bl).trim();
       let cat = CATEGORIES.find(c => c.toLowerCase() === String(o.category || '').trim().toLowerCase());
-      if (!cat) { const prev = byKey.get(bl) || byKey.get(items); cat = prev ? prev.Category : 'Others'; if (!prev) unknownCat++; }
+      if (!cat) { const prev = byKey.get(bl) || byKey.get(items); cat = prev ? prev.Category : inferCategory(items); if (!prev) unknownCat++; }
       const etd = toTs(o.etd), eta = toTs(o.eta);
+      if (!bl && etd == null && eta == null) return; // stray line with no shipment details
       if (etd == null) noDate++;
       rows.push({
         Supplier: String(o.supplier || '').trim(), Items: items, Category: cat, Terms: String(o.terms || '').trim(),
@@ -92,7 +107,11 @@
 
   function parseWorkbook(XLSX, workbook, known) {
     const name = workbook.SheetNames.find(n => /shipment/i.test(n)) || workbook.SheetNames[0];
-    const sheetRows = XLSX.utils.sheet_to_json(workbook.Sheets[name], { defval: '', raw: true });
+    const aoa = XLSX.utils.sheet_to_json(workbook.Sheets[name], { header: 1, defval: '', raw: true });
+    const hi = aoa.findIndex(r => r.some(c => String(c).trim().toLowerCase() === 'items') && r.some(c => String(c).trim().toLowerCase() === 'bl'));
+    if (hi < 0) return { rows: [], unknownCat: 0, noDate: 0 };
+    const keys = aoa[hi].map(c => String(c).trim());
+    const sheetRows = aoa.slice(hi + 1).map(r => { const o = {}; keys.forEach((k, i) => { if (k) o[k] = r[i]; }); return o; });
     return parseRows(sheetRows, known);
   }
 
