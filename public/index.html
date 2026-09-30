@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="robots" content="noindex, nofollow">
+    <title>HM Arrivals Control Center</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+    <div class="gate" id="gate" hidden>
+        <form id="gateForm" autocomplete="off">
+            <h1>📦 HM Arrivals Control Center</h1>
+            <p>Enter the password to view incoming shipments.</p>
+            <input type="password" id="gatePass" placeholder="Password" aria-label="Password" autocomplete="current-password" required>
+            <div class="err" id="gateErr" role="alert"></div>
+            <button type="submit">Open dashboard</button>
+        </form>
+    </div>
+
+    <div class="container" id="app" hidden>
+        <div class="warn" id="warnBar" hidden></div>
+        <div class="header">
+            <h1>📦 HM Arrivals Control Center</h1>
+            <p>Real-time tracking of incoming items · Updated <span id="updatedLabel"></span> · <span id="sourceLabel"></span></p>
+        </div>
+
+        <div class="analytics">
+            <div class="analytics-card">
+                <div class="label">Total Items</div>
+                <div class="number" id="kTotal">54</div>
+            </div>
+            <div class="analytics-card">
+                <div class="label">Delivered</div>
+                <div class="number" id="kDel">0</div>
+            </div>
+            <div class="analytics-card">
+                <div class="label">In Transit</div>
+                <div class="number" id="kTr">0</div>
+            </div>
+            <div class="analytics-card">
+                <div class="label">Issues</div>
+                <div class="number" id="kIss">0</div>
+            </div>
+        </div>
+
+        <div class="controls">
+            <div class="controls-grid">
+                <div class="search-box">
+                    <input type="text" id="searchInput" placeholder="Search by item, supplier, or POD..." />
+                </div>
+                <div class="filter-group">
+                    <label>Category:</label>
+                    <button class="filter-btn active" data-category="all">All</button>
+                    <button class="filter-btn" data-category="Packaging">Packaging</button>
+                    <button class="filter-btn" data-category="Food">Food</button>
+                    <button class="filter-btn" data-category="Merchandise">Merchandise</button>
+                    <button class="filter-btn" data-category="Others">Others</button>
+                </div>
+            </div>
+
+            <div class="controls-grid">
+                <div class="filter-group">
+                    <label>Status:</label>
+                    <button class="filter-btn active" data-status="all">All</button>
+                    <button class="filter-btn" data-status="Delivered">Delivered</button>
+                    <button class="filter-btn" data-status="In Transit">In Transit</button>
+                    <button class="filter-btn" data-status="Not Manifested">Not Manifested</button>
+                    <button class="filter-btn" data-status="Delayed">Delayed</button>
+                </div>
+                <div class="sort-controls">
+                    <button class="sort-btn" id="sortETA">📅 Sort by ETA</button>
+                    <button class="sort-btn" id="sortETD">📤 Sort by ETD</button>
+                    <button class="sort-btn" id="sortSupplier">🏢 Sort by Supplier</button>
+                </div>
+            </div>
+        </div>
+
+        <div class="table-wrapper">
+            <div class="table-container">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Item Name</th>
+                            <th>Category</th>
+                            <th>Supplier</th>
+                            <th>Status</th>
+                            <th>ETD</th>
+                            <th>ETA</th>
+                            <th>POD</th>
+                            <th style="text-align: center;">Notes</th>
+                        </tr>
+                    </thead>
+                    <tbody id="tableBody"></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <div class="tools" id="tools" hidden>
+        <span id="toolMsg" role="status"></span>
+        <button type="button" id="tplBtn" title="Download the Excel template">⤓ template</button>
+        <button type="button" id="upBtn" title="Preview a filled template on this screen only">⤒ upload</button>
+        <input type="file" id="fileIn" accept=".xlsx,.xls" hidden>
+    </div>
+    <div class="confirm" id="confirmBox" hidden>
+        <span id="confirmText"></span>
+        <span><button type="button" id="confirmYes" class="primary">Replace data</button> <button type="button" id="confirmNo">Cancel</button></span>
+    </div>
+
+    <div class="modal" id="remarksModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>📋 Shipment Details</h2>
+                <button class="modal-close" onclick="closeModal()">&times;</button>
+            </div>
+            <div id="modalBody"></div>
+        </div>
+    </div>
+
+    <script src="vendor/xlsx.full.min.js"></script>
+    <script src="shared/shipments.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>

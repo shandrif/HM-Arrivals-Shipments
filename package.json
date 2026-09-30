@@ -1,0 +1,8 @@
+{
+  "name": "hm-arrivals-control-center",
+  "private": true,
+  "version": "1.0.0",
+  "description": "HM Arrivals Control Center: password-protected shipment dashboard for Netlify",
+  "engines": { "node": ">=18" },
+  "dependencies": { "xlsx": "0.18.5" }
+}
