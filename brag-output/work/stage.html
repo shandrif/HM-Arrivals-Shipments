@@ -1,0 +1,121 @@
+<!doctype html><html><head><meta charset="utf-8"><style>
+:root{--bg:#f5ece2;--surface:#fbf7f1;--ink:#1d1b17;--muted:#7d7466;--teal:#6cc6af;--teal-deep:#2b8a74;--tan:#d4b38b;--high:#c2564a;--line:#e9dfd1}
+*{box-sizing:border-box;margin:0}
+html,body{width:1920px;height:1080px;overflow:hidden;background:var(--bg);font-family:'Plus Jakarta Sans',sans-serif;color:var(--ink);-webkit-font-smoothing:antialiased}
+.abs{position:absolute}
+#s1{left:0;top:0;width:1920px;height:1080px}
+.eyebrow{position:absolute;left:180px;top:380px;font-weight:700;font-size:26px;letter-spacing:.14em;text-transform:uppercase;color:var(--teal-deep)}
+.h1{position:absolute;left:180px;top:430px;font-weight:800;font-size:132px;letter-spacing:-.035em;line-height:1.05;white-space:nowrap}
+.h1 .sw{position:relative;display:inline-block}
+.h1 .a,.h1 .b{display:inline-block;white-space:nowrap}
+.h1 .b{position:absolute;left:0;top:0;color:var(--teal-deep)}
+#win{left:210px;top:50px;width:1500px;height:844px;border-radius:22px;overflow:hidden;background:var(--bg);box-shadow:0 2px 6px rgba(70,48,15,.08),0 30px 80px rgba(70,48,15,.18)}
+#inner{position:absolute;left:0;top:0;width:1500px;height:844px;transform-origin:0 0}
+#inner img{position:absolute;left:0;top:0;width:1500px;height:844px}
+#cap{left:0;width:1920px;top:938px;text-align:center}
+.pill{position:absolute;left:50%;transform:translateX(-50%);white-space:nowrap;background:var(--ink);color:var(--bg);padding:20px 38px;border-radius:99px;font-weight:700;font-size:38px;letter-spacing:-.01em}
+.pill b{color:var(--teal)}
+#cursor{width:34px;height:34px;filter:drop-shadow(0 2px 3px rgba(0,0,0,.35))}
+#chip{background:var(--surface);border:2px solid var(--teal);border-radius:14px;padding:12px 18px;font-weight:700;font-size:20px;color:var(--ink);white-space:nowrap;box-shadow:0 8px 24px rgba(70,48,15,.2)}
+#chip i{display:inline-block;width:12px;height:12px;border-radius:50%;background:var(--teal-deep);margin-right:10px}
+.ring{border:5px solid var(--high);border-radius:20px;box-shadow:0 0 0 8px rgba(194,86,74,.16)}
+.ring.t{border-color:var(--teal-deep);box-shadow:0 0 0 8px rgba(43,138,116,.16)}
+#out{left:0;top:0;width:1920px;height:1080px}
+#mark{left:180px;top:300px;width:150px;height:150px;border-radius:38px;background:var(--tan);display:grid;place-items:center;font-weight:800;font-size:58px;letter-spacing:-.03em;color:#2a2115}
+#title{left:180px;top:490px;font-weight:800;font-size:150px;letter-spacing:-.04em;line-height:1;white-space:nowrap}
+#sub{left:184px;top:670px;font-weight:600;font-size:40px;color:var(--muted);white-space:nowrap}
+.chips{left:180px;top:770px;display:flex;gap:16px}
+.c{background:var(--surface);border:2px solid var(--line);border-radius:99px;padding:14px 26px;font-weight:700;font-size:28px;white-space:nowrap}
+.c:before{content:'';display:inline-block;width:12px;height:12px;border-radius:50%;background:var(--teal);margin-right:12px}
+#url{left:180px;top:900px;font-weight:800;font-size:44px;color:var(--teal-deep);letter-spacing:-.01em}
+</style></head><body>
+<div id="s1" class="abs"><div class="eyebrow" id="eb">Weekly waste report</div>
+<div class="h1" id="h1">Waste, in a <span class="sw"><span class="a" id="wa">spreadsheet.</span><span class="b" id="wb">dashboard.</span></span></div></div>
+<div id="win" class="abs"><div id="inner">
+ <img id="i0" src="s0b-menu-empty.png"><img id="i1" src="s1-overview.png"><img id="i2" src="s2-stores.png">
+ <div id="ringK" class="abs ring"></div><div id="ringT" class="abs ring t"></div>
+ <div id="ripple" class="abs" style="width:60px;height:60px;border-radius:50%;border:4px solid var(--teal-deep);"></div>
+ <div id="chip" class="abs"><i></i>Waste_Report_W39.xlsx</div>
+ <svg id="cursor" class="abs" viewBox="0 0 24 24"><path d="M3 2l7 19 3-8 8-3z" fill="#1d1b17" stroke="#fff" stroke-width="1.6" stroke-linejoin="round"/></svg>
+</div></div>
+<div id="cap" class="abs"><div class="pill" id="c1"></div><div class="pill" id="c2"></div><div class="pill" id="c3"></div></div>
+<div id="out" class="abs">
+ <div id="mark" class="abs">½M</div><div id="title" class="abs">Wastage Tracker</div>
+ <div id="sub" class="abs">Know which stores throw away the most.</div>
+ <div class="chips abs"><span class="c" id="k1">Reduce-by plans</span><span class="c" id="k2">Excel exports</span><span class="c" id="k3">4 weeks of history</span></div>
+ <div id="url" class="abs">halfmwastage.com</div></div>
+<script>
+const K=1500/1440,$=id=>document.getElementById(id);
+const cl=(x,a=0,b=1)=>Math.min(b,Math.max(a,x));
+const pr=(t,a,b)=>cl((t-a)/(b-a));
+const eo=x=>1-Math.pow(1-x,4), eio=x=>x<.5?4*x*x*x:1-Math.pow(-2*x+2,3)/2, eoE=x=>x>=1?1:1-Math.pow(2,-10*x);
+const lerp=(a,b,x)=>a+(b-a)*x;
+const B=__BOXES__;
+const bx=([x,y,w,h])=>[x*K,y*K,w*K,h*K];
+const up=bx(B.upload),su=bx(B.summary),kp=bx(B.kpis[2]),kall=bx(B.kpis[0]),tb=bx(B.table),wt=bx(B.wasteTh);
+const place=(el,[x,y,w,h],pad=0)=>{el.style.left=(x-pad)+'px';el.style.top=(y-pad)+'px';el.style.width=(w+2*pad)+'px';el.style.height=(h+2*pad)+'px'};
+place($('ringK'),kp,8);place($('ringT'),[wt[0],wt[1]+0,wt[2],tb[3]*0.5],6);
+const upC=[up[0]+up[2]*.5,up[1]+up[3]*.5];
+function setCaption(el,t,a,b,txt){el.innerHTML=txt;const i=eo(pr(t,a,a+.5)),o=eo(pr(t,b-.4,b));el.style.opacity=i*(1-o);el.style.transform=`translateX(-50%) translateY(${(1-i)*26+o*14}px)`;}
+function cam(t){ // returns [s,fx,fy]
+ let s=1,fx=750,fy=422;
+ let z=eio(pr(t,7.2,8.0)),zo=eio(pr(t,10.4,11.2));
+ const k=z*(1-zo);
+ s=1+.6*k;fx=lerp(750,(kall[0]+kp[0]+kp[2])/2,k);fy=lerp(422,kp[1]+kp[3]*.5+40,k);
+ const z2=eio(pr(t,12.6,13.8)),zo2=eio(pr(t,15.0,15.7));const k2=z2*(1-zo2);
+ s=Math.max(s,1+.12*k2);if(k2>0){fx=750;fy=lerp(422,tb[1]+300,k2);}
+ return [s,fx,fy];}
+window.setT=function(t){
+ // S1
+ const s1=$('s1');const out1=eio(pr(t,3.1,3.6));
+ s1.style.opacity=1-out1;s1.style.transform=`translateY(${-out1*60}px)`;
+ const e=eo(pr(t,.15,.7));$('eb').style.opacity=e;$('eb').style.transform=`translateY(${(1-e)*20}px)`;
+ const h=eo(pr(t,.3,1.0));$('h1').style.opacity=h;$('h1').style.transform=`translateY(${(1-h)*40}px)`;
+ const sw=eio(pr(t,2.0,2.5));
+ $('wa').style.opacity=1-sw;$('wa').style.transform=`translateY(${-sw*50}px)`;
+ $('wb').style.opacity=sw;$('wb').style.transform=`translateY(${(1-sw)*50}px)`;
+ // window
+ const win=$('win');const enter=eoE(pr(t,3.3,4.2)),exit=eio(pr(t,15.7,16.4));
+ win.style.opacity=(t<3.3?0:1)*(1-exit);
+ win.style.transform=`translateY(${(1-enter)*1000+exit*50}px) scale(${1-exit*.05})`;
+ // camera
+ const [s,fx,fy]=cam(t);let tx=750-s*fx,ty=422-s*fy;tx=cl(tx,1500-1500*s,0);ty=cl(ty,844-844*s,0);
+ $('inner').style.transform=`translate(${tx}px,${ty}px) scale(${s})`;
+ // layers
+ const rv=eio(pr(t,5.6,6.5));
+ $('i0').style.opacity=t<6.6?1:0;
+ $('i1').style.clipPath=`circle(${rv*2600}px at ${upC[0]}px ${upC[1]}px)`;$('i1').style.opacity=t>5.55?1-eio(pr(t,11.2,11.7)):0;
+ const sw2=pr(t,11.7,12.9);
+ $('i2').style.opacity=sw2>0?1:0;
+ const wipe=eio(pr(t,11.7,12.9));$('i2').style.clipPath=`inset(0 0 ${(1-wipe)*100}% 0)`;
+ // i1 fade behind stores
+ $('i1').style.filter='none';
+ // cursor
+ const cp=eio(pr(t,4.1,4.95));const cx=lerp(up[0]+up[2]+140,upC[0]+20,cp),cy=lerp(up[1]+520,upC[1]+14,cp)+Math.sin(cp*Math.PI)*-40;
+ const cur=$('cursor');cur.style.left=cx+'px';cur.style.top=cy+'px';
+ const press=pr(t,5.0,5.15)-pr(t,5.15,5.3);
+ cur.style.opacity=(t<4.0?0:1)*(1-pr(t,6.3,6.8));cur.style.transform=`scale(${1-press*.15})`;
+ // ripple
+ const rp=eo(pr(t,5.1,5.7));const rpEl=$('ripple');rpEl.style.left=(upC[0]+20-30)+'px';rpEl.style.top=(upC[1]+14-30)+'px';
+ rpEl.style.opacity=t<5.1?0:(1-rp)*.9;rpEl.style.transform=`scale(${.4+rp*2.2})`;
+ // chip
+ const cpf=eoE(pr(t,5.1,5.7)),cpo=eio(pr(t,5.55,5.95));const chip=$('chip');
+ chip.style.left=lerp(upC[0]-60,upC[0]-120,cpf)+'px';chip.style.top=lerp(upC[1]+320,upC[1]-8,cpf)+'px';
+ chip.style.opacity=t<5.1?0:1-cpo;chip.style.transform=`scale(${1-cpo*.4})`;
+ // rings
+ const rk=eoE(pr(t,8.3,8.8));$('ringK').style.opacity=rk*(1-eio(pr(t,10.4,10.8)));$('ringK').style.transform=`scale(${1.08-rk*.08})`;
+ const rt=eoE(pr(t,13.3,13.8));$('ringT').style.opacity=rt*(1-eio(pr(t,14.8,15.2)));$('ringT').style.transform=`scale(${1.06-rt*.06})`;
+ // captions
+ setCaption($('c1'),t,4.0,6.9,'Drop in the weekly report.');
+ setCaption($('c2'),t,7.5,11.3,'Waste as <b>% of net sales</b>, against your limit.');
+ setCaption($('c3'),t,12.3,15.6,'Every store ranked. <b>Over the limit?</b> Red.');
+ // outro
+ const o=$('out');
+ const m=eoE(pr(t,16.5,17.1));$('mark').style.opacity=t<16.5?0:1;$('mark').style.transform=`scale(${.6+.4*m}) rotate(${(1-m)*-8}deg)`;
+ const ti=eo(pr(t,16.8,17.4));$('title').style.opacity=ti;$('title').style.transform=`translateY(${(1-ti)*40}px)`;
+ const su2=eo(pr(t,17.2,17.8));$('sub').style.opacity=su2;$('sub').style.transform=`translateY(${(1-su2)*24}px)`;
+ [['k1',17.7],['k2',17.85],['k3',18.0]].forEach(([id,a])=>{const v=eo(pr(t,a,a+.5));$(id).style.opacity=v;$(id).style.transform=`translateY(${(1-v)*24}px)`});
+ const u=eo(pr(t,18.5,19.0));$('url').style.opacity=u;$('url').style.transform=`translateY(${(1-u)*20}px)`;
+};
+document.fonts.ready.then(()=>{window.READY=true});
+</script></body></html>

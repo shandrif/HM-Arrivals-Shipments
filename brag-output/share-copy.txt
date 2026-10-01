@@ -1,0 +1,1 @@
+Waste, in a spreadsheet. Now: waste, in a dashboard. Wastage Tracker turns the weekly write-off report into store-by-store waste % of net sales, with the high ones flagged in red.
