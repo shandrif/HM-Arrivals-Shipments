@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Area Manager Visits</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap">
+<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="visits.css">
+</head>
+<body>
+<header class="top"><div class="wrap">
+  <div class="brand">
+    <div class="mark" aria-hidden="true">½M</div>
+    <div><h1>Area Manager Visits</h1><span class="muted" id="sub">Visit calendar</span></div>
+  </div>
+  <div class="actions">
+    <a class="btn" href="index.html">← Wastage Tracker</a>
+    <button class="btn" id="btnTemplate" type="button">↓ Download template</button>
+    <button class="btn primary" id="btnUploadAsk" type="button">↑ Upload schedule</button>
+    <input type="file" id="fileUpload" accept=".xlsx,.xls,.csv" hidden>
+    <button class="btn" id="btnAdmin" type="button">🔒 Admin</button>
+  </div>
+</div></header>
+
+<div class="tabbar wrap"><div class="tabs" id="tabs" role="tablist" aria-label="Sections">
+  <button role="tab" data-tab="calendar" class="active" aria-selected="true">Calendar</button>
+  <button role="tab" data-tab="dashboard" aria-selected="false">Admin dashboard 🔒</button>
+</div></div>
+
+<main class="wrap">
+  <div id="notice" class="notice" role="status" hidden></div>
+
+  <section id="tab-calendar">
+    <div class="toolbar cal-bar">
+      <div class="monthnav">
+        <button class="btn" id="prevM" type="button" aria-label="Previous month">‹</button>
+        <h2 id="monthTitle"></h2>
+        <button class="btn" id="nextM" type="button" aria-label="Next month">›</button>
+        <button class="btn" id="todayM" type="button">Today</button>
+      </div>
+      <select id="amFilter" aria-label="Filter by area manager"></select>
+      <button class="btn primary" id="btnAdd" type="button" hidden>+ Schedule visit</button>
+    </div>
+    <div class="card cal">
+      <div class="cal-head"><span>Sun</span><span>Mon</span><span>Tue</span><span>Wed</span><span>Thu</span><span>Fri</span><span>Sat</span></div>
+      <div class="cal-grid" id="calGrid"></div>
+    </div>
+    <p class="muted small legend"><i class="dot s-open"></i>Scheduled <i class="dot s-part"></i>In progress <i class="dot s-done"></i>Completed <i class="dot s-over"></i>Overdue</p>
+  </section>
+
+  <section id="tab-dashboard" hidden>
+    <div class="toolbar">
+      <label class="inl-lbl">Month <input type="month" id="dashMonth"></label>
+      <select id="dashAm" aria-label="Area manager"></select>
+      <button class="btn" id="btnExport" type="button">↓ Export month (Excel)</button>
+      <button class="btn" id="btnBackup" type="button">↓ Backup</button>
+      <button class="btn" id="btnRestoreAsk" type="button">↑ Restore backup</button>
+      <input type="file" id="fileRestore" accept=".json" hidden>
+      <button class="btn" id="btnPw" type="button">Change password</button>
+      <button class="btn" id="btnLogout" type="button">Log out</button>
+    </div>
+    <div class="kpis" id="dashKpis"></div>
+    <div class="grid g2">
+      <div class="card"><h3>Task completion by area manager <small>% of tasks done</small></h3><div class="chart tall"><canvas id="chAm" role="img" aria-label="Task completion by area manager"></canvas></div></div>
+      <div class="card"><h3>Visits by status</h3><div class="chart tall"><canvas id="chStatus" role="img" aria-label="Visits by status"></canvas></div></div>
+    </div>
+    <div class="card tablewrap" style="margin-top:16px"><h3>Area managers <small>for the selected month</small></h3><table id="tblAm"></table></div>
+    <div class="card tablewrap" style="margin-top:16px"><h3>Needs attention <small>overdue visits and unfinished tasks</small></h3><table id="tblAttn"></table></div>
+    <div class="card tablewrap" style="margin-top:16px"><h3>Stores not visited <small>no visit scheduled this month</small></h3><div id="unvisited" class="muted"></div></div>
+  </section>
+</main>
+
+<div id="toast" class="toast" role="status" aria-live="polite"></div>
+<div id="modal" class="modal" hidden><div class="modal-box" id="modalBox" role="dialog" aria-modal="true" tabindex="-1"><button class="close" id="modalClose" aria-label="Close">✕</button><div id="modalBody"></div></div></div>
+
+<script src="vendor/xlsx.full.min.js"></script>
+<script src="vendor/chart.umd.js"></script>
+<script src="data/default-mapping.js"></script>
+<script src="visits.js"></script>
+</body>
+</html>
