@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Area Manager Visits</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap">
+<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="visits.css">
+</head>
+<body>
+<header class="top"><div class="wrap">
+  <div class="brand">
+    <div class="mark" aria-hidden="true">½M</div>
+    <div><h1>Area Manager Visits</h1><span id="adminState" class="muted">Viewing only</span></div>
+  </div>
+  <div class="actions">
+    <a class="btn" href="index.html">← Wastage tracker</a>
+    <button class="btn" id="btnLogin">Admin login</button>
+    <details class="more" id="adminMenu" hidden>
+      <summary class="btn primary">Admin ▾</summary>
+      <div class="menu">
+        <button class="btn" id="btnTemplate">↓ Download visit template</button>
+        <label class="btn primary">↑ Upload filled template<input type="file" id="fileVisits" accept=".xlsx,.xls,.csv" hidden></label>
+        <hr>
+        <button class="btn" id="btnBackup">↓ Backup (JSON)</button>
+        <label class="btn">↑ Restore backup<input type="file" id="fileBackup" accept=".json" hidden></label>
+        <hr>
+        <button class="btn" id="btnChangePw">Change password</button>
+        <button class="btn" id="btnLogout">Log out</button>
+        <span class="muted small" id="storeInfo"></span>
+      </div>
+    </details>
+  </div>
+</div></header>
+
+<div id="notice" class="notice wrap" role="status" hidden></div>
+
+<div class="tabbar wrap"><div class="tabs" id="tabs" role="tablist" aria-label="Sections">
+  <button role="tab" data-tab="calendar" aria-selected="true" class="active">Calendar</button>
+  <button role="tab" data-tab="dashboard" aria-selected="false" id="tabDash">Admin dashboard 🔒</button>
+</div></div>
+
+<section class="filters"><div class="wrap">
+  <div class="monthnav">
+    <button class="btn" id="prevM" aria-label="Previous month">‹</button>
+    <strong id="monthLabel" aria-live="polite"></strong>
+    <button class="btn" id="nextM" aria-label="Next month">›</button>
+    <button class="btn" id="todayM">Today</button>
+  </div>
+  <label>Area manager <select id="amFilter"><option value="">All area managers</option></select></label>
+  <button class="btn primary" id="btnAdd" hidden>+ Schedule visit</button>
+</div></section>
+
+<main class="wrap">
+  <section id="tab-calendar" class="tab">
+    <div class="card cal">
+      <div class="cal-head" id="calHead"></div>
+      <div class="cal-grid" id="calGrid"></div>
+    </div>
+    <p class="muted small legend">
+      <span class="chip s-planned">Planned</span> <span class="chip s-prog">In progress</span>
+      <span class="chip s-done">Completed</span> <span class="chip s-over">Overdue</span>
+      · Anyone can tick tasks as done; only the admin can schedule or edit visits.
+    </p>
+  </section>
+
+  <section id="tab-dashboard" class="tab" hidden>
+    <div class="kpis" id="kpis"></div>
+    <div class="grid g2">
+      <div class="card"><h3>Task completion by area manager <small>%</small></h3><div class="chart tall"><canvas id="chAm" role="img" aria-label="Task completion by area manager"></canvas></div></div>
+      <div class="card"><h3>Visits by status</h3><div class="chart tall"><canvas id="chStatus" role="img" aria-label="Visits by status"></canvas></div></div>
+    </div>
+    <div class="card tablewrap"><div class="cardhead"><h3>Area managers — this month</h3><button class="btn" id="btnExportMonth">↓ Export month (Excel)</button></div><table id="tblAm"></table></div>
+    <div class="card tablewrap"><h3>All visits this month</h3><table id="tblVisits"></table></div>
+    <div class="card"><h3>Stores not visited this month <small id="unvisCount"></small></h3><div id="unvisited" class="unvis"></div></div>
+  </section>
+</main>
+
+<div id="modal" class="modal" hidden><div class="modal-card" role="dialog" aria-modal="true" id="modalCard"></div></div>
+<div id="toast" class="toast" role="status"></div>
+
+<script src="vendor/xlsx.full.min.js"></script>
+<script src="vendor/chart.umd.js"></script>
+<script src="data/default-mapping.js"></script>
+<script src="visits.js"></script>
+</body>
+</html>
