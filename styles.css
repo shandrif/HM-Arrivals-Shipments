@@ -171,7 +171,6 @@ th button.sort:focus-visible,.rowlink:focus-visible{outline:2px solid var(--teal
 .filters .cap{text-transform:none;letter-spacing:0;font-weight:500;font-size:12px;color:var(--muted)}
 #weekSelect{min-width:260px}
 main{transition:opacity 150ms ease}
-main.busy{opacity:.5;pointer-events:none}
 .btn.danger{background:var(--high-bg);border-color:transparent;color:var(--high)}
 @media (hover:hover) and (pointer:fine){.btn.danger:hover{border-color:var(--high)}}
 .btn.danger:disabled{opacity:.45;cursor:not-allowed}
@@ -232,3 +231,8 @@ main.busy{opacity:.5;pointer-events:none}
 .strip.lbl b{font-weight:600}
 .sb{display:block;height:calc(4px + var(--h,0)*30px);border-radius:4px 4px 2px 2px;background:var(--mint)}
 .sb.z{background:var(--line);height:3px}
+
+/* a week that is still loading never freezes or fades the page */
+#weekField.loading #weekCount::after{content:' · loading…';color:var(--teal-deep);font-weight:700}
+.tab-error{display:flex;flex-wrap:wrap;align-items:center;gap:10px 14px;margin-bottom:16px;border:1px solid var(--high);color:var(--ink)}
+.tab-error b{color:var(--high)}.tab-error span{color:var(--muted);flex:1;min-width:200px;font-size:13px}

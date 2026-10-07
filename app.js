@@ -43,12 +43,34 @@ function applyWeekData(w) {
   state.records = w.records; state.sales = w.sales;
   if (w.mapping) loadMapping(w.mapping, true, true); else loadMapping(window.DEFAULT_MAPPING || [], false);
 }
-async function rpc(name, body) {
-  const res = await sapi('rpc/' + name, { method: 'POST', body: JSON.stringify(body) });
-  if (res.ok) return res.json();
-  const t = await res.text(); const e = new Error(t); e.status = res.status;
-  e.code = /invalid (password|passcode)/i.test(t) ? 'auth' : /week limit/i.test(t) ? 'limit' : /not found/i.test(t) ? 'missing' : 'other';
-  throw e;
+async function rpc(name, body, ms = 30000) {
+  const ctl = new AbortController(), timer = setTimeout(() => ctl.abort(), ms);
+  try {
+    const res = await sapi('rpc/' + name, { method: 'POST', body: JSON.stringify(body), signal: ctl.signal });
+    if (res.ok) return res.json();
+    const t = await res.text(); const e = new Error(t); e.status = res.status;
+    e.code = /invalid (password|passcode)/i.test(t) ? 'auth' : /week limit/i.test(t) ? 'limit' : /not found/i.test(t) ? 'missing' : 'other';
+    throw e;
+  } catch (err) {
+    if (err && err.name === 'AbortError') { const e = new Error('The server took too long to answer.'); e.code = 'timeout'; throw e; }
+    throw err;
+  } finally { clearTimeout(timer); }
+}
+
+// ---------- remembered choices (week, area manager, tab, limits) ----------
+const PREF_KEY = 'hmPrefs', TABS = ['overview', 'stores', 'storewaste', 'products', 'extremes', 'managers'];
+const getPrefs = () => { try { return JSON.parse(localStorage.getItem(PREF_KEY)) || {}; } catch (e) { return {}; } };
+const setPref = (k, v) => { try { const p = getPrefs(); p[k] = v; localStorage.setItem(PREF_KEY, JSON.stringify(p)); } catch (e) {} };
+function restorePrefs() {
+  const p = getPrefs();
+  if (p.am && [...$('amSelect').options].some(o => o.value === p.am)) { $('amSelect').value = p.am; state.am = p.am; }
+  if (typeof p.high === 'number') { state.high = p.high; $('thHigh').value = +(p.high * 100).toFixed(2); }
+  if (typeof p.low === 'number') { state.low = p.low; $('thLow').value = +(p.low * 100).toFixed(2); }
+  if (p.pct >= 1 && p.pct <= 100) { fc.pct = p.pct; $('redPct').value = p.pct; }
+  if ([1, 2, 3, 4, 5, 7].includes(p.minDays)) { fc.minDays = p.minDays; $('redDays').value = String(p.minDays); }
+  if (p.tabView === 'reduce' || p.tabView === 'rank') fc.tabView = p.tabView;
+  if (!TABS.includes(location.hash.slice(1)) && TABS.includes(p.tab)) state.tab = p.tab;
+  return p;
 }
 
 // ---------- weeks ----------
@@ -72,30 +94,38 @@ function renderWeekSelect() {
   $('btnDeleteWeek').disabled = !saved;
   $('btnDeleteWeek').textContent = saved ? `Delete week ${weekLabel(state.week, (state.weeks.find(w => w.week_key === state.week) || {}).meta)}…` : 'Delete this week…';
 }
-const setBusy = on => { document.querySelector('main').classList.toggle('busy', on); $('weekSelect').disabled = on; };
+const setBusy = on => { $('weekField').classList.toggle('loading', on); };
 async function refreshWeeks() {
   const d = await rpc('get_weeks', { p_password: state.viewPass });
   state.weeks = d.weeks; renderWeekSelect();
 }
 async function getWeekData(key) {
-  let w = state.weekCache.get(key);
-  if (!w) {
+  const hit = state.weekCache.get(key); if (hit) return hit;
+  state.inflight = state.inflight || new Map();
+  if (!state.inflight.has(key)) state.inflight.set(key, (async () => {
     const r = await rpc('get_week', { p_password: state.viewPass, p_week: key });
-    w = await unpackData(r.payload); w.meta = r.meta || {}; w.updated_at = r.updated_at; state.weekCache.set(key, w);
-  }
-  return w;
+    const w = await unpackData(r.payload); w.meta = r.meta || {}; w.updated_at = r.updated_at; state.weekCache.set(key, w); return w;
+  })().finally(() => state.inflight.delete(key)));
+  return state.inflight.get(key);
 }
+let weekReq = 0;
 async function selectWeek(key) {
   if (key === state.week && state.dirty) return;
   if (state.dirty) { state.dirty = false; $('publishBar').hidden = true; toast('The unsaved upload was discarded.'); }
-  setBusy(true);
+  const mine = ++weekReq; setBusy(true);
   try {
     const w = await getWeekData(key);
+    if (mine !== weekReq) return;                       // a newer choice was made while this one loaded
     state.week = key; applyWeekData(w);
     state.published = { at: w.updated_at, meta: w.meta }; state.files = (w.meta && w.meta.files) || [];
-    build(); render();
-  } catch (e) { toast('Could not load that week. Check your connection and try again.'); }
-  setBusy(false); renderWeekSelect();
+    setPref('week', key); build(); render();
+  } catch (e) {
+    if (mine === weekReq) toast(e.code === 'timeout' ? 'That week took too long to load. Check your connection and choose it again.' : 'Could not load that week. Check your connection and try again.');
+  } finally { if (mine === weekReq) { setBusy(false); renderWeekSelect(); } }
+}
+function prefetchWeeks() {   // quietly load the other weeks so switching weeks is instant
+  const keys = state.weeks.map(w => w.week_key).filter(k => !state.weekCache.has(k));
+  (async () => { for (const k of keys) { try { await getWeekData(k); } catch (e) {} await new Promise(r => setTimeout(r, 300)); } })();
 }
 
 function lock(msg) { document.body.classList.add('locked'); $('gate').hidden = false; $('gateMsg').textContent = msg || ''; $('gatePw').focus(); }
@@ -115,7 +145,10 @@ async function loadShared(pw, fromGate) {
   state.viewPass = pw; state.weeks = d.weeks;
   document.body.classList.remove('locked'); $('gate').hidden = true; $('gatePw').value = '';
   if (!d.weeks.length) { $('emptyTitle').textContent = 'No data published yet'; $('emptyText').textContent = 'Open “Update data” to upload the first waste report and publish it.'; renderWeekSelect(); return; }
-  await selectWeek(d.weeks[0].week_key);
+  const p = restorePrefs(), start = d.weeks.some(w => w.week_key === p.week) ? p.week : d.weeks[0].week_key;
+  await selectWeek(start);
+  if (!state.records.length) { $('emptyTitle').textContent = 'Could not load the data'; $('emptyText').textContent = 'The connection was slow or interrupted. Your data is safe.'; $('emptyRetry').hidden = false; return; }
+  $('emptyRetry').hidden = true; prefetchWeeks();
 }
 const savedPass = () => { try { return localStorage.getItem('hmPass') || ''; } catch (e) { return ''; } };
 function toast(msg) { const t = $('toast'); t.textContent = msg; t.classList.add('show'); clearTimeout(toast.t); toast.t = setTimeout(() => t.classList.remove('show'), 6000); }
@@ -310,7 +343,14 @@ function scope() {
 }
 
 // ---------- rendering helpers ----------
-function killCharts() { Object.values(state.charts).forEach(c => c.destroy()); state.charts = {}; }
+function killCharts() { Object.values(state.charts).forEach(c => { try { c.destroy(); } catch (e) {} }); state.charts = {}; }
+function clearTabError() { document.querySelectorAll('.tab-error').forEach(n => n.remove()); }
+function showTabError(e) {
+  const sec = document.getElementById('tab-' + state.tab); if (!sec) return; clearTabError();
+  const box = document.createElement('div'); box.className = 'tab-error card'; box.setAttribute('role', 'alert');
+  box.innerHTML = `<b>This view could not be shown.</b><span>${esc((e && e.message) || e)}</span><button type="button" class="btn" data-retry>Try again</button><button type="button" class="btn" data-reload>Reload page</button>`;
+  sec.prepend(box);
+}
 function table(el, cols, rows, key, onRow) {
   const s = state.sort[key] || (state.sort[key] = { col: cols.find(c => c.def)?.k || cols[0].k, dir: -1 });
   const col = cols.find(c => c.k === s.col) || cols[0];
@@ -353,7 +393,8 @@ function render() {
   $('scopeInfo').textContent = `${sc.st.length} store${sc.st.length === 1 ? '' : 's'} in view` + (state.am ? ` · ${state.am}` : '') +
     (unm && !state.am ? ` · ${unm} store(s) not in mapping (Unassigned)` : '');
   if (state.tab !== state.prevTab) { if (state.tab === 'storewaste') state.wkError = false; state.prevTab = state.tab; }
-  ({ overview, stores, storewaste, products, extremes, managers })[state.tab](sc);
+  clearTabError(); setPref('tab', state.tab);
+  try { ({ overview, stores, storewaste, products, extremes, managers })[state.tab](sc); } catch (e) { console.error(e); showTabError(e); }
 }
 
 function overview(sc) {
@@ -644,10 +685,10 @@ $('modalBody').addEventListener('click', e => {
 $('modalBody').addEventListener('change', e => { if (e.target.matches('[data-fc-week]')) { fc.dayWeek = e.target.value; refreshFcModal('[data-fc-week]'); } });
 $('fcDownload').onclick = downloadFcTable;
 $('fcDownloadAll').onclick = downloadReduceItems;
-$('fcViewSeg').onclick = e => { const b = e.target.closest('[data-fcv]'); if (b) { fc.tabView = b.dataset.fcv; render(); } };
+$('fcViewSeg').onclick = e => { const b = e.target.closest('[data-fcv]'); if (b) { fc.tabView = b.dataset.fcv; setPref('tabView', fc.tabView); render(); } };
 const clampPct = v => Math.max(1, Math.min(100, Math.round(+v || 0)));
-$('redPct').onchange = e => { fc.pct = clampPct(e.target.value); e.target.value = fc.pct; render(); };
-$('redDays').onchange = e => { fc.minDays = +e.target.value || 1; render(); };
+$('redPct').onchange = e => { fc.pct = clampPct(e.target.value); e.target.value = fc.pct; setPref('pct', fc.pct); render(); };
+$('redDays').onchange = e => { fc.minDays = +e.target.value || 1; setPref('minDays', fc.minDays); render(); };
 
 function products(sc) {
   const sel = $('prodCat'), cur = sel.value;
@@ -812,12 +853,16 @@ $('fileMap').onchange = async e => {
     notice(''); build(); render(); if (state.records.length) markDirty();
   } catch (err) { notice('Mapping file: ' + err.message); }
 };
-$('amSelect').onchange = e => { state.am = e.target.value; render(); };
+$('amSelect').onchange = e => { state.am = e.target.value; setPref('am', state.am); render(); };
 $('weekSelect').onchange = e => selectWeek(e.target.value);
+$('emptyRetry').onclick = () => { $('emptyRetry').hidden = true; $('emptyTitle').textContent = 'Loading latest data…'; $('emptyText').textContent = 'Fetching the published dashboard.'; loadShared(state.viewPass); };
 $('btnDeleteWeek').onclick = deleteWeekDialog;
-$('thHigh').onchange = e => { state.high = (+e.target.value || 0) / 100; render(); };
-$('thLow').onchange = e => { state.low = (+e.target.value || 0) / 100; render(); };
+$('thHigh').onchange = e => { state.high = (+e.target.value || 0) / 100; setPref('high', state.high); render(); };
+$('thLow').onchange = e => { state.low = (+e.target.value || 0) / 100; setPref('low', state.low); render(); };
 ['storeSearch', 'storeStatus', 'prodSearch', 'prodCat', 'fcSearch'].forEach(id => $(id).oninput = render);
+document.querySelector('main').addEventListener('click', e => { if (e.target.closest('[data-retry]')) render(); else if (e.target.closest('[data-reload]')) location.reload(); });
+window.addEventListener('error', e => { if (e && e.message && !/ResizeObserver/.test(e.message)) toast('Something went wrong. Try again, or reload the page.'); });
+window.addEventListener('unhandledrejection', () => toast('Something went wrong. Try again, or reload the page.'));
 $('tabs').onclick = e => { const b = e.target.closest('button[data-tab]'); if (b) { state.tab = b.dataset.tab; render(); } };
 $('tabs').onkeydown = e => {
   const keys = ['ArrowLeft', 'ArrowRight', 'Home', 'End']; if (!keys.includes(e.key)) return;
