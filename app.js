@@ -861,8 +861,16 @@ $('thHigh').onchange = e => { state.high = (+e.target.value || 0) / 100; setPref
 $('thLow').onchange = e => { state.low = (+e.target.value || 0) / 100; setPref('low', state.low); render(); };
 ['storeSearch', 'storeStatus', 'prodSearch', 'prodCat', 'fcSearch'].forEach(id => $(id).oninput = render);
 document.querySelector('main').addEventListener('click', e => { if (e.target.closest('[data-retry]')) render(); else if (e.target.closest('[data-reload]')) location.reload(); });
-window.addEventListener('error', e => { if (e && e.message && !/ResizeObserver/.test(e.message)) toast('Something went wrong. Try again, or reload the page.'); });
-window.addEventListener('unhandledrejection', () => toast('Something went wrong. Try again, or reload the page.'));
+const ours = s => /app\.js/.test(String(s || ''));
+window.addEventListener('error', e => {
+  if (!e || /ResizeObserver/.test(e.message || '')) return;
+  if (!ours(e.filename) && !ours(e.error && e.error.stack)) { console.warn('Ignored outside error:', e.message, e.filename); return; }
+  console.error(e.error || e.message); toast('Something went wrong: ' + (e.message || 'unknown error') + '. Reload the page.');
+});
+window.addEventListener('unhandledrejection', e => {
+  const r = e && e.reason; if (!ours(r && r.stack)) { console.warn('Ignored outside rejection:', r); return; }
+  console.error(r); toast('Something went wrong: ' + ((r && r.message) || r) + '. Reload the page.');
+});
 $('tabs').onclick = e => { const b = e.target.closest('button[data-tab]'); if (b) { state.tab = b.dataset.tab; render(); } };
 $('tabs').onkeydown = e => {
   const keys = ['ArrowLeft', 'ArrowRight', 'Home', 'End']; if (!keys.includes(e.key)) return;
