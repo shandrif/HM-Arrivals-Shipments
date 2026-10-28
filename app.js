@@ -1,7 +1,7 @@
 (() => {
 'use strict';
 // keep in step with <meta name="app-version"> in index.html (change both on every update)
-const APP_VERSION = '2026-10-28-2';
+const APP_VERSION = '2026-10-28-3';
 function showBootFail() {   // works even on an old cached page that lacks the banner
   let f = document.getElementById('bootFail');
   if (!f) {
@@ -460,6 +460,7 @@ function renderView() {
   $('empty').hidden = has || rem;
   document.querySelectorAll('.tab').forEach(t => t.hidden = !(has || rem) || t.id !== 'tab-' + state.tab);
   document.querySelectorAll('#tabs button').forEach(b => { const on = b.dataset.tab === state.tab; b.classList.toggle('active', on); b.setAttribute('aria-selected', on); b.tabIndex = on ? 0 : -1; });
+  if (window.LiquidTabs) LiquidTabs.sync();
   try { if (location.hash !== '#' + state.tab) history.replaceState(null, '', '#' + state.tab); } catch (e) {}
   if (rem) { clearTabError(); try { remarks(); } catch (e) { console.error(e); showTabError(e); } return; }
   if (!has) { $('period').textContent = 'No data loaded'; $('scopeInfo').textContent = ''; return; }
@@ -1037,6 +1038,7 @@ window.addEventListener('unhandledrejection', e => {
   const r = e && e.reason; if (!ours(r && r.stack)) { console.warn('Ignored outside rejection:', r); return; }
   console.error(r); toast('Something went wrong: ' + ((r && r.message) || r) + '. Reload the page.');
 });
+if (window.LiquidTabs) LiquidTabs.init($('tabs'));
 $('tabs').onclick = e => { const b = e.target.closest('button[data-tab]'); if (b) { state.tab = b.dataset.tab; render(); } };
 $('tabs').onkeydown = e => {
   const keys = ['ArrowLeft', 'ArrowRight', 'Home', 'End']; if (!keys.includes(e.key)) return;
