@@ -1,7 +1,7 @@
 (() => {
 'use strict';
 // keep in step with <meta name="app-version"> in index.html (change both on every update)
-const APP_VERSION = '2026-10-28-3';
+const APP_VERSION = '2026-10-28-4';
 function showBootFail() {   // works even on an old cached page that lacks the banner
   let f = document.getElementById('bootFail');
   if (!f) {

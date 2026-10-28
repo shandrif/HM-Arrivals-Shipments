@@ -244,3 +244,4 @@ main{transition:opacity 150ms ease}
 .tabs.liquid button.active{background:none;box-shadow:none}
 .lt-water{position:absolute;left:-14px;top:-14px;z-index:-1;pointer-events:none}
 .tabs:not(.liquid) .lt-water{display:none}
+.tabs.liquid.lt-scroll{overflow-x:auto;overflow-y:hidden;scrollbar-width:none}.tabs.liquid.lt-scroll::-webkit-scrollbar{display:none}

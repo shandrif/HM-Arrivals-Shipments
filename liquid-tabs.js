@@ -146,13 +146,14 @@ void main(){
 
     function measure() {
       const el = activeEl(); if (!s.on || !el || !nav.offsetWidth) return;
-      s.w = nav.offsetWidth; s.h = nav.offsetHeight;
+      s.w = Math.max(nav.offsetWidth, s.need || 0); s.h = nav.offsetHeight;
       const T = s.t; T.r = el.offsetHeight / 2; T.q = Math.max(0, el.offsetWidth / 2 - T.r);
       T.cy = PAD + el.offsetTop + el.offsetHeight / 2;
       const nx = PAD + el.offsetLeft + el.offsetWidth / 2;
       if (!s.ready) { s.a.x = s.b.x = nx; s.q = T.q; s.ready = true; }
       else if (Math.abs(nx - T.x) > 0.5) { s.lead = Math.abs(nx - s.a.x) <= Math.abs(nx - s.b.x) ? 0 : 1; s.lagFrom = performance.now() + 70; s.moving = true; s.split = false; }
       T.x = nx;
+      if (nav.classList.contains('lt-scroll') && !s.reduce) { const L = el.offsetLeft - (nav.clientWidth - el.offsetWidth) / 2; try { nav.scrollTo({ left: Math.max(0, L), behavior: 'smooth' }); } catch (e) { nav.scrollLeft = Math.max(0, L); } }
       const dpr = Math.min(window.devicePixelRatio || 1, 2), W = s.w + PAD * 2, Hh = s.h + PAD * 2;
       if (canvas.width !== Math.round(W * dpr) || canvas.height !== Math.round(Hh * dpr)) {
         canvas.width = Math.round(W * dpr); canvas.height = Math.round(Hh * dpr); canvas.style.width = W + 'px'; canvas.style.height = Hh + 'px';
@@ -171,10 +172,12 @@ void main(){
     function fit() {
       const bs = items(), room = nav.parentElement ? nav.parentElement.clientWidth : 0;
       const need = bs.reduce((n, b) => n + b.offsetWidth, 0) + 2 * Math.max(0, bs.length - 1) + 8;
-      if (need > 8 && need <= room) enable(); else if (need > room) disable();
+      if (need <= 8) return;
+      s.need = need; nav.classList.toggle('lt-scroll', need > room);   // narrow screens: the tabs scroll sideways and the drop scrolls with them
+      enable();
     }
 
-    const local = e => { const r = nav.getBoundingClientRect(); return { x: e.clientX - r.left + PAD, y: e.clientY - r.top + PAD }; };
+    const local = e => { const r = nav.getBoundingClientRect(); return { x: e.clientX - r.left + nav.scrollLeft + PAD, y: e.clientY - r.top + PAD }; };
     nav.addEventListener('pointermove', e => { if (!s.on || e.pointerType !== 'mouse') return; const p = local(e); s.mouse.x = p.x; s.mouse.y = p.y; s.mouse.on = true; loop(); });
     nav.addEventListener('pointerleave', () => { s.mouse.on = false; loop(); });
     nav.addEventListener('pointerdown', e => { if (!s.on || s.reduce) return; const p = local(e); s.rips.push({ x: p.x, y: p.y, age: 0, amp: 0.8 }); loop(); });
