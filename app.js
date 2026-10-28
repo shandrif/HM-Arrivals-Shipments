@@ -1,5 +1,27 @@
 (() => {
 'use strict';
+// keep in step with <meta name="app-version"> in index.html (change both on every update)
+const APP_VERSION = '2026-10-26-2';
+function showBootFail() {   // works even on an old cached page that lacks the banner
+  let f = document.getElementById('bootFail');
+  if (!f) {
+    f = document.createElement('div'); f.id = 'bootFail'; f.setAttribute('role', 'alert');
+    f.style.cssText = 'position:fixed;left:50%;top:24px;transform:translateX(-50%);z-index:100;display:flex;flex-wrap:wrap;gap:8px 12px;align-items:center;background:#fbf7f1;color:#1d1b17;border:1px solid #e9dfd1;border-radius:14px;padding:14px 18px;box-shadow:0 6px 20px rgba(70,48,15,.12);font:14px system-ui,sans-serif;max-width:calc(100% - 32px)';
+    f.innerHTML = '<b>The dashboard was just updated.</b> <span>Please reload to load the new version.</span> <button type="button" style="padding:8px 16px;border-radius:99px;border:0;background:#6cc6af;font-weight:700;cursor:pointer">Reload</button>';
+    f.querySelector('button').onclick = () => location.reload();
+    (document.body || document.documentElement).appendChild(f);
+  }
+  f.hidden = false;
+}
+{
+  const pageV = (document.querySelector('meta[name="app-version"]') || {}).content;
+  if (pageV !== APP_VERSION) {   // old page + new code (or the reverse): reload once to get matching files
+    let tried = ''; try { tried = sessionStorage.getItem('hmReloadFor') || ''; } catch (e) {}
+    if (tried !== APP_VERSION) { try { sessionStorage.setItem('hmReloadFor', APP_VERSION); } catch (e) {} location.reload(); return; }
+    showBootFail(); return;
+  }
+}
+window.addEventListener('error', e => { if (!window.__wasteReady && /app\.js/.test(String(e.filename || ''))) showBootFail(); });
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const norm = s => String(s ?? '').replace(/\s+/g, ' ').trim().toLowerCase();
@@ -12,8 +34,9 @@ const state = {
   records: [], sales: [], mapping: [], mapCustom: false,
   stores: [], am: '', high: 0.014, low: 0.01,
   sort: {}, charts: {}, tab: 'overview', files: [],
-  weeks: [], week: '', weekCache: new Map(), viewPass: '', dirty: false
+  weeks: [], week: '', weekCache: new Map(), viewPass: '', dirty: false, rm: '', live: null
 };
+const ALL = '__all__';   // "All weeks (MTD)" choice in the week dropdown
 
 // ---------- shared storage (Supabase) ----------
 const SUPA = { url: 'https://rudbxlurozmpcdnshbcg.supabase.co',
@@ -41,7 +64,8 @@ async function unpackData(text) {
 }
 function applyWeekData(w) {
   state.records = w.records; state.sales = w.sales;
-  if (w.mapping) loadMapping(w.mapping, true, true); else loadMapping(window.DEFAULT_MAPPING || [], false);
+  if (state.live) loadMapping(state.live.rows, false, true, true);
+  else if (w.mapping) loadMapping(w.mapping, true, true); else loadMapping(window.DEFAULT_MAPPING || [], false);
 }
 async function rpc(name, body, ms = 30000) {
   const ctl = new AbortController(), timer = setTimeout(() => ctl.abort(), ms);
@@ -58,23 +82,21 @@ async function rpc(name, body, ms = 30000) {
 }
 
 // ---------- remembered choices (week, area manager, tab, limits) ----------
-const PREF_KEY = 'hmPrefs', TABS = ['overview', 'stores', 'storewaste', 'products', 'extremes', 'managers'];
+const PREF_KEY = 'hmPrefs', TABS = ['overview', 'stores', 'storewaste', 'products', 'extremes', 'managers', 'remarks'];
 const getPrefs = () => { try { return JSON.parse(localStorage.getItem(PREF_KEY)) || {}; } catch (e) { return {}; } };
 const setPref = (k, v) => { try { const p = getPrefs(); p[k] = v; localStorage.setItem(PREF_KEY, JSON.stringify(p)); } catch (e) {} };
 function restorePrefs() {
   const p = getPrefs();
+  if (p.rm && [...$('rmSelect').options].some(o => o.value === p.rm)) { $('rmSelect').value = p.rm; state.rm = p.rm; fillManagers(); }
   if (p.am && [...$('amSelect').options].some(o => o.value === p.am)) { $('amSelect').value = p.am; state.am = p.am; }
   if (typeof p.high === 'number') { state.high = p.high; $('thHigh').value = +(p.high * 100).toFixed(2); }
   if (typeof p.low === 'number') { state.low = p.low; $('thLow').value = +(p.low * 100).toFixed(2); }
-  if (p.pct >= 1 && p.pct <= 100) { fc.pct = p.pct; $('redPct').value = p.pct; }
-  if ([1, 2, 3, 4, 5, 7].includes(p.minDays)) { fc.minDays = p.minDays; $('redDays').value = String(p.minDays); }
-  if (p.tabView === 'reduce' || p.tabView === 'rank') fc.tabView = p.tabView;
   if (!TABS.includes(location.hash.slice(1)) && TABS.includes(p.tab)) state.tab = p.tab;
   return p;
 }
 
 // ---------- weeks ----------
-const MAX_WEEKS = 4;
+const MAX_WEEKS = 5;
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const fmtDay = (iso, withYear) => { const [y, m, d] = iso.split('-').map(Number); return `${d} ${MONTHS[m - 1]}${withYear ? ' ' + y : ''}`; };
 const weekLabel = (key, meta) => { const from = (meta && meta.from) || key, to = (meta && meta.to) || from; return `${fmtDay(from, from.slice(0, 4) !== to.slice(0, 4))} – ${fmtDay(to, true)}`; };
@@ -85,14 +107,27 @@ function renderWeekSelect() {
   const sel = $('weekSelect'), items = state.weeks.map(w => ({ key: w.week_key, label: weekLabel(w.week_key, w.meta), saved: true }));
   if (state.dirty && state.week && !items.some(x => x.key === state.week)) items.push({ key: state.week, label: weekLabel(state.week, currentMeta()), saved: false });
   items.sort((x, y) => y.key.localeCompare(x.key));
+  if (state.weeks.length >= 2) items.unshift({ key: ALL, label: 'All weeks (MTD) · ' + allRange(), saved: true, all: true });
   $('weekField').hidden = !items.length;
-  sel.innerHTML = items.map((x, n) => `<option value="${x.key}">${esc(x.label)}${!x.saved ? ' · not saved' : n === 0 ? ' · latest' : ''}</option>`).join('');
+  const latest = items.find(x => !x.all);
+  sel.innerHTML = items.map(x => `<option value="${x.key}">${esc(x.label)}${!x.saved ? ' · not saved' : x === latest ? ' · latest' : ''}</option>`).join('');
   if (items.some(x => x.key === state.week)) sel.value = state.week;
   $('weekCount').textContent = `${state.weeks.length} of ${MAX_WEEKS} weeks stored`;
   const saved = state.weeks.some(w => w.week_key === state.week) && !state.dirty;
   $('btnDeleteWeek').hidden = !savedPass();
   $('btnDeleteWeek').disabled = !saved;
   $('btnDeleteWeek').textContent = saved ? `Delete week ${weekLabel(state.week, (state.weeks.find(w => w.week_key === state.week) || {}).meta)}…` : 'Delete this week…';
+}
+function allRange() {
+  const ms = state.weeks.map(w => w.meta || {}), f = ms.map((m, i) => m.from || state.weeks[i].week_key).sort(), t = ms.map((m, i) => m.to || m.from || state.weeks[i].week_key).sort();
+  return f.length ? weekLabel(f[0], { from: f[0], to: t[t.length - 1] }) : '';
+}
+async function allWeeksData() {   // every stored week added together
+  await loadAllWeeks();
+  const ws = [...state.weeks].sort((x, y) => x.week_key.localeCompare(y.week_key)).map(w => state.weekCache.get(w.week_key)).filter(Boolean);
+  const last = ws[ws.length - 1] || {};
+  return { records: ws.flatMap(w => w.records), sales: ws.flatMap(w => w.sales), mapping: last.mapping || null,
+    updated_at: ws.map(w => w.updated_at).sort().pop(), meta: { files: [], weeks: ws.length } };
 }
 const setBusy = on => { $('weekField').classList.toggle('loading', on); };
 async function refreshWeeks() {
@@ -112,9 +147,9 @@ let weekReq = 0;
 async function selectWeek(key) {
   if (key === state.week && state.dirty) return;
   if (state.dirty) { state.dirty = false; $('publishBar').hidden = true; toast('The unsaved upload was discarded.'); }
-  const mine = ++weekReq; setBusy(true);
+  const mine = ++weekReq; setBusy(true); state.trFailed = false;
   try {
-    const w = await getWeekData(key);
+    const w = key === ALL ? await allWeeksData() : await getWeekData(key);
     if (mine !== weekReq) return;                       // a newer choice was made while this one loaded
     state.week = key; applyWeekData(w);
     state.published = { at: w.updated_at, meta: w.meta }; state.files = (w.meta && w.meta.files) || [];
@@ -133,6 +168,7 @@ async function loadShared(pw, fromGate) {
   if (!pw) { lock(''); return; }
   $('gateBtn').disabled = true;
   let d;
+  const liveReq = rpc('get_mapping', { p_password: pw }).catch(() => null);
   try { d = await rpc('get_weeks', { p_password: pw }); }
   catch (e) {
     $('gateBtn').disabled = false;
@@ -142,10 +178,14 @@ async function loadShared(pw, fromGate) {
   }
   $('gateBtn').disabled = false;
   try { localStorage.setItem('hmView', pw); if (d.admin) localStorage.setItem('hmPass', pw); } catch (e) {}
-  state.viewPass = pw; state.weeks = d.weeks;
+  state.viewPass = pw; state.weeks = d.weeks; state.admin = !!d.admin; state.remarks = null;
+  const lm = await liveReq;
+  state.live = lm && lm.rows && lm.rows.length ? { meta: lm.meta || {}, rows: lm.rows.map(r => ({ code: String(r.code || '').toUpperCase(), branch: r.branch || '', am: titleCase(r.am || ''), rom: titleCase(r.rm || ''), region: '', city: '' })) } : null;
+  if (state.live) loadMapping(state.live.rows, false, true, true);
+  $('tabbtn-remarks').hidden = !state.admin;
   document.body.classList.remove('locked'); $('gate').hidden = true; $('gatePw').value = '';
   if (!d.weeks.length) { $('emptyTitle').textContent = 'No data published yet'; $('emptyText').textContent = 'Open “Update data” to upload the first waste report and publish it.'; renderWeekSelect(); return; }
-  const p = restorePrefs(), start = d.weeks.some(w => w.week_key === p.week) ? p.week : d.weeks[0].week_key;
+  const p = restorePrefs(), start = (p.week === ALL && d.weeks.length >= 2) || d.weeks.some(w => w.week_key === p.week) ? p.week : d.weeks[0].week_key;
   await selectWeek(start);
   if (!state.records.length) { $('emptyTitle').textContent = 'Could not load the data'; $('emptyText').textContent = 'The connection was slow or interrupted. Your data is safe.'; $('emptyRetry').hidden = false; return; }
   $('emptyRetry').hidden = true; prefetchWeeks();
@@ -185,14 +225,29 @@ async function publish(auto) {
 }
 
 // ---------- mapping ----------
-function loadMapping(rows, custom, fromShared) {
+function loadMapping(rows, custom, fromShared, live) {
   state.mapping = rows; state.mapCustom = custom; state.mapShared = !!fromShared;
-  $('mapInfo').textContent = `${custom ? 'Custom' : 'Built-in'} mapping: ${rows.length} rows, ${new Set(rows.map(r => r.am)).size} area managers`;
-  const sel = $('amSelect'), cur = sel.value;
-  sel.innerHTML = '<option value="">All area managers</option>' +
-    [...new Set(rows.map(r => r.am))].sort().map(a => `<option value="${esc(a)}">${esc(a)}</option>`).join('');
-  if ([...sel.options].some(o => o.value === cur)) sel.value = cur; else { sel.value = ''; state.am = ''; }
+  const counts = `${rows.length} branches, ${new Set(rows.map(r => r.am)).size} area managers, ${new Set(rows.map(r => r.rom).filter(Boolean)).size} regional managers`;
+  if (live) {
+    const m = (state.live && state.live.meta) || {};
+    $('mapInfo').textContent = `Mapping from SharePoint (Span of control): ${counts}` + (m.synced_at ? ` · updated ${new Date(m.synced_at).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' })}` : '') + (m.notes ? ` · ${m.notes}` : '');
+  } else $('mapInfo').textContent = `${custom ? 'Custom' : 'Built-in'} mapping: ${counts}`;
+  ['btnMapTemplate', 'btnMapReset'].forEach(id => { $(id).hidden = !!live; });
+  $('fileMap').closest('label').hidden = !!live;
+  fillManagers();
 }
+// regional manager list, then the area managers that report to the chosen regional manager
+function fillManagers() {
+  const rows = state.mapping, rs = $('rmSelect'), as = $('amSelect');
+  const rms = [...new Set(rows.map(r => r.rom).filter(Boolean))].sort();
+  rs.innerHTML = '<option value="">All regional managers</option>' + rms.map(r => `<option value="${esc(r)}">${esc(r)}</option>`).join('');
+  if (rms.includes(state.rm)) rs.value = state.rm; else { rs.value = ''; state.rm = ''; }
+  $('rmField').hidden = !rms.length;
+  const ams = [...new Set(rows.filter(r => !state.rm || r.rom === state.rm).map(r => r.am))].sort();
+  as.innerHTML = `<option value="">${state.rm ? 'All area managers of ' + esc(state.rm) : 'All area managers'}</option>` + ams.map(a => `<option value="${esc(a)}">${esc(a)}</option>`).join('');
+  if (ams.includes(state.am)) as.value = state.am; else { as.value = ''; state.am = ''; }
+}
+const inScope = s => (!state.rm || s.rom === state.rm) && (!state.am || s.am === state.am);
 function parseMappingRows(aoa) {
   const hi = aoa.findIndex(r => r.some(c => /area manager/i.test(c)));
   if (hi < 0) throw new Error('Mapping file needs an "Area Manager" column');
@@ -323,7 +378,7 @@ const STATUS_LABEL = { high: 'High', ok: 'Normal', low: 'Unusually low', na: 'No
 const chip = s => `<span class="chip ${s}">${STATUS_LABEL[s]}</span>`;
 
 function scope() {
-  const st = state.stores.filter(s => (s.waste > 0 || s.sales > 0) && (!state.am || s.am === state.am));
+  const st = state.stores.filter(s => (s.waste > 0 || s.sales > 0) && inScope(s));
   const cats = [...new Set(state.records.map(r => r.cat))];
   const catTotals = Object.fromEntries(cats.map(c => [c, 0]));
   const prods = new Map(), days = new Map();
@@ -379,25 +434,157 @@ function notice(msg) { const n = $('notice'); n.hidden = !msg; n.textContent = m
 
 // ---------- views ----------
 function render() {
+  try { renderView(); }
+  catch (e) {   // never leave the page blank: show the current tab with an error box instead
+    console.error(e);
+    document.querySelectorAll('.tab').forEach(t => t.hidden = t.id !== 'tab-' + state.tab);
+    if (state.records.length) showTabError(e); else $('empty').hidden = false;
+  }
+}
+function renderView() {
   killCharts();
-  const has = state.records.length > 0;
-  $('empty').hidden = has;
-  document.querySelectorAll('.tab').forEach(t => t.hidden = !has || t.id !== 'tab-' + state.tab);
+  if (state.tab === 'remarks' && !state.admin) state.tab = 'overview';
+  const has = state.records.length > 0, rem = state.tab === 'remarks';
+  $('empty').hidden = has || rem;
+  document.querySelectorAll('.tab').forEach(t => t.hidden = !(has || rem) || t.id !== 'tab-' + state.tab);
   document.querySelectorAll('#tabs button').forEach(b => { const on = b.dataset.tab === state.tab; b.classList.toggle('active', on); b.setAttribute('aria-selected', on); b.tabIndex = on ? 0 : -1; });
   try { if (location.hash !== '#' + state.tab) history.replaceState(null, '', '#' + state.tab); } catch (e) {}
+  if (rem) { clearTabError(); try { remarks(); } catch (e) { console.error(e); showTabError(e); } return; }
   if (!has) { $('period').textContent = 'No data loaded'; $('scopeInfo').textContent = ''; return; }
   const days = state.records.map(r => r.day).filter(d => d != null);
   $('period').textContent = (days.length ? `${dayISO(Math.min(...days))} → ${dayISO(Math.max(...days))} · ` : '') + `${fmt(state.records.length)} write-off records` + (state.published && !state.dirty ? ` · updated ${new Date(state.published.at).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' })}` : '');
   const sc = scope();
   const unm = state.stores.filter(s => s.waste > 0 && !s.mapped).length;
-  $('scopeInfo').textContent = `${sc.st.length} store${sc.st.length === 1 ? '' : 's'} in view` + (state.am ? ` · ${state.am}` : '') +
-    (unm && !state.am ? ` · ${unm} store(s) not in mapping (Unassigned)` : '');
+  $('scopeInfo').textContent = `${sc.st.length} store${sc.st.length === 1 ? '' : 's'} in view` + (state.week === ALL ? ` · all ${state.weeks.length} weeks` : '') + (state.rm ? ` · ${state.rm}` : '') + (state.am ? ` · ${state.am}` : '') +
+    (unm && !state.am && !state.rm ? ` · ${unm} store(s) not in mapping (Unassigned)` : '');
   if (state.tab !== state.prevTab) { if (state.tab === 'storewaste') state.wkError = false; state.prevTab = state.tab; }
   clearTabError(); setPref('tab', state.tab);
   try { ({ overview, stores, storewaste, products, extremes, managers })[state.tab](sc); } catch (e) { console.error(e); showTabError(e); }
 }
 
+// waste per stored week for the stores in view (follows the regional / area manager filters)
+// ---------- weekly trend (all items, or one item: value + quantity) ----------
+const itemKeyOf = p => p.code ? 'c:' + p.code.toUpperCase() : 'n:' + p.key;
+function trendWeeks() {   // [{key, label, range, stores}] incl. an unsaved upload
+  const keys = state.weeks.map(w => w.week_key).sort(), out = []; let missing = 0;
+  keys.forEach((k, i) => {
+    const w = state.weekCache.get(k); if (!w) { missing++; return; }
+    const m = (state.weeks.find(x => x.week_key === k) || {}).meta || {};
+    out.push({ key: k, label: `Week ${i + 1}`, range: weekLabel(k, m), stores: weekStores(w).values() });
+  });
+  if (state.dirty && !keys.includes(state.week)) out.push({ key: state.week, label: 'New upload', range: weekLabel(state.week, currentMeta()), stores: state.stores.values() });
+  return { weeks: out.map(w => ({ ...w, stores: [...w.stores] })), missing };
+}
+function trendRows() {
+  const { weeks, missing } = trendWeeks();
+  const rows = weeks.map(w => {
+    let waste = 0, sales = 0; for (const s of w.stores) if (inScope(s)) { waste += s.waste; sales += s.sales; }
+    return { key: w.key, label: w.label, range: w.range, waste, pct: sales > 0 ? waste / sales : null };
+  });
+  return { rows, missing };
+}
+function itemRows(key) {
+  const { weeks, missing } = trendWeeks(), units = new Set(); let name = '';
+  const rows = weeks.map(w => {
+    let value = 0, qty = 0, stores = 0;
+    for (const s of w.stores) {
+      if (!inScope(s)) continue;
+      let hit = false;
+      for (const p of s.prod.values()) if (itemKeyOf(p) === key) { value += p.value; qty += p.qty; hit = true; if (p.um) units.add(p.um.toLowerCase()); name = name || p.name; }
+      if (hit) stores++;
+    }
+    return { key: w.key, label: w.label, range: w.range, value, qty, stores };
+  });
+  return { rows, missing, units: [...units], name };
+}
+// list of every item in the stored weeks, for the item picker
+function refreshItemList() {
+  const items = new Map();
+  for (const w of state.weekCache.values()) for (const s of weekStores(w).values()) for (const p of s.prod.values()) {
+    const k = itemKeyOf(p); if (!items.has(k)) items.set(k, { name: p.name, um: p.um, code: p.code });
+  }
+  if (state.dirty) for (const s of state.stores) for (const p of s.prod.values()) { const k = itemKeyOf(p); if (!items.has(k)) items.set(k, { name: p.name, um: p.um, code: p.code }); }
+  const sig = items.size + '|' + state.weekCache.size; if (sig === state.itemSig) return; state.itemSig = sig;
+  state.itemOpts = new Map(); state.itemLabel = new Map();
+  [...items].sort((x, y) => x[1].name.localeCompare(y[1].name)).forEach(([k, it]) => {
+    const label = `${it.name}${it.um ? ' (' + it.um + ')' : ''}${it.code ? ' · ' + it.code : ''}`;
+    state.itemOpts.set(label.toLowerCase(), k); state.itemLabel.set(k, label);
+  });
+  $('itemList').innerHTML = [...state.itemLabel.values()].map(l => `<option value="${esc(l)}"></option>`).join('');
+  if (state.trItem && !state.itemLabel.has(state.trItem)) state.trItem = '';
+}
+function pickItem(text) {
+  const t = clean(text).toLowerCase();
+  if (!t) { state.trItem = ''; $('trendItem').value = ''; render(); return; }
+  let k = state.itemOpts && state.itemOpts.get(t);
+  if (!k && state.itemOpts) { const hits = [...state.itemOpts].filter(([l]) => l.includes(t)); if (hits.length === 1) k = hits[0][1]; }
+  if (k) { state.trItem = k; $('trendItem').value = state.itemLabel.get(k); render(); }
+}
+const valueLabels = (rows, get) => ({ id: 'barLabels', afterDatasetsDraw(ch) {
+  const { ctx } = ch, meta = ch.getDatasetMeta(0); ctx.save(); ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
+  ctx.font = `700 13px ${cssv('--font') || 'sans-serif'}`; ctx.fillStyle = cssv('--ink');
+  meta.data.forEach((bar, i) => ctx.fillText(fmt(get(rows[i])), bar.x, bar.y - 6));
+  ctx.restore(); } });
+function trendChart() {
+  refreshItemList();
+  $('trendClear').hidden = !state.trItem;
+  return state.trItem ? itemTrendChart() : totalTrendChart();
+}
+function loadMissing(missing) {   // fetch the other weeks once; a failure never retriggers itself (that looped and blanked the charts)
+  if (!missing || state.trLoading || state.trFailed) return;
+  state.trLoading = true;
+  Promise.all(state.weeks.map(w => getWeekData(w.week_key).then(() => true, () => false))).then(r => {
+    state.trFailed = r.some(ok => !ok);
+  }).finally(() => { state.trLoading = false; if (state.tab === 'overview') render(); });
+}
+function totalTrendChart() {
+  const { rows, missing } = trendRows(); loadMissing(missing);
+  $('trendSub').textContent = 'waste value on each bar · waste % of net sales under each week';
+  $('trendNote').textContent = missing ? (state.trFailed ? 'Some weeks could not be loaded. Choose a week again to retry.' : 'Loading weeks…') : rows.length < 2 ? 'Upload more weeks to see the trend.' : '';
+  $('chTrend').setAttribute('aria-label', 'Wastage value by week: ' + rows.map(r => `${r.label} (${r.range}) ${fmt(r.waste)}, ${pct(r.pct)} of net sales`).join('; '));
+  const sel = r => state.week === ALL || r.key === state.week;
+  const max = Math.max(1, ...rows.map(r => r.waste));
+  state.charts.trend = new Chart($('chTrend'), { type: 'bar', plugins: [valueLabels(rows, r => r.waste)],
+    data: { labels: rows.map(r => [r.label, r.range, (r.pct == null ? '–' : pct(r.pct)) + ' of sales']),
+      datasets: [{ data: rows.map(r => Math.round(r.waste)), backgroundColor: rows.map(r => sel(r) ? PAL[0] : '#c9e6dd'), borderRadius: 8, borderSkipped: false, maxBarThickness: 90 }] },
+    options: { maintainAspectRatio: false, layout: { padding: { top: 26 } }, plugins: { legend: { display: false }, tooltip: { callbacks: { title: it => rows[it[0].dataIndex].label + ' · ' + rows[it[0].dataIndex].range, label: c => `Waste ${fmt(rows[c.dataIndex].waste)} · ${pct(rows[c.dataIndex].pct)} of net sales` } } },
+      scales: { x: { grid: { display: false }, border: { display: false }, ticks: { color: cssv('--ink'), font: { size: 12 } } },
+        y: { suggestedMax: max * 1.12, grid: { color: cssv('--line') }, border: { display: false }, title: { display: true, text: 'Waste value' }, ticks: { callback: v => v >= 1000 ? v / 1000 + 'k' : v } } } } });
+}
+function itemTrendChart() {
+  const { rows, missing, units, name } = itemRows(state.trItem); loadMissing(missing);
+  const um = units.length === 1 ? units[0] : '', mixed = units.length > 1;
+  $('trendSub').textContent = `${name || 'Item'} · waste value (bars) and quantity${um ? ' in ' + um : ''} (line) per week`;
+  $('trendNote').textContent = missing ? (state.trFailed ? 'Some weeks could not be loaded. Choose a week again to retry.' : 'Loading weeks…') : mixed ? `Note: this item is recorded in different units (${units.join(', ')}), so the quantity line adds them together. Check the entries.` :
+    !rows.some(r => r.value || r.qty) ? 'No waste for this item in the stores in view.' : rows.length < 2 ? 'Upload more weeks to see the trend.' : '';
+  $('chTrend').setAttribute('aria-label', `${name} by week: ` + rows.map(r => `${r.label} (${r.range}) value ${fmt(r.value)}, quantity ${fmt(r.qty, 1)} ${um}, ${r.stores} stores`).join('; '));
+  const sel = r => state.week === ALL || r.key === state.week;
+  const vmax = Math.max(1, ...rows.map(r => r.value)), qmax = Math.max(1, ...rows.map(r => r.qty));
+  const qtyLabels = { id: 'qtyLabels', afterDatasetsDraw(ch) {
+    const { ctx } = ch, meta = ch.getDatasetMeta(1); ctx.save(); ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.font = `700 12px ${cssv('--font') || 'sans-serif'}`;
+    meta.data.forEach((pt, i) => {
+      const t = `${fmt(rows[i].qty, 1)}${um ? ' ' + um : ''}`, w = ctx.measureText(t).width + 14, x = pt.x, y = pt.y - 20;
+      ctx.fillStyle = '#2b8a74'; ctx.beginPath(); ctx.roundRect ? ctx.roundRect(x - w / 2, y - 10, w, 20, 10) : ctx.rect(x - w / 2, y - 10, w, 20); ctx.fill();
+      ctx.fillStyle = '#ffffff'; ctx.fillText(t, x, y + 0.5);
+    });
+    ctx.restore(); } };
+  state.charts.trend = new Chart($('chTrend'), { type: 'bar', plugins: [valueLabels(rows, r => r.value), qtyLabels],
+    data: { labels: rows.map(r => [r.label, r.range, `${r.stores} store${r.stores === 1 ? '' : 's'}`]),
+      datasets: [
+        { type: 'bar', label: 'Waste value', yAxisID: 'y', order: 2, data: rows.map(r => Math.round(r.value * 100) / 100), backgroundColor: rows.map(r => sel(r) ? PAL[0] : '#c9e6dd'), borderRadius: 8, borderSkipped: false, maxBarThickness: 90 },
+        { type: 'line', label: `Quantity${um ? ' (' + um + ')' : ''}`, yAxisID: 'y1', order: 1, data: rows.map(r => Math.round(r.qty * 10) / 10), borderColor: '#2b8a74', backgroundColor: '#2b8a74', borderWidth: 3, pointRadius: 5, pointHoverRadius: 7, tension: 0.25 }] },
+    options: { maintainAspectRatio: false, layout: { padding: { top: 34 } },
+      plugins: { legend: { display: true, position: 'bottom', labels: { usePointStyle: true, boxWidth: 8, padding: 16 } },
+        tooltip: { callbacks: { title: it => rows[it[0].dataIndex].label + ' · ' + rows[it[0].dataIndex].range,
+          label: c => c.datasetIndex === 0 ? `Waste value ${fmt(rows[c.dataIndex].value, 1)}` : `Quantity ${fmt(rows[c.dataIndex].qty, 1)} ${um}`,
+          afterBody: it => `${rows[it[0].dataIndex].stores} store(s) wasted it` } } },
+      scales: { x: { grid: { display: false }, border: { display: false }, ticks: { color: cssv('--ink'), font: { size: 12 } } },
+        y: { position: 'left', suggestedMax: vmax * 1.15, grid: { color: cssv('--line') }, border: { display: false }, title: { display: true, text: 'Waste value' }, ticks: { callback: v => v >= 1000 ? v / 1000 + 'k' : v } },
+        y1: { position: 'right', beginAtZero: true, suggestedMax: qmax * 2.3, grid: { display: false }, border: { display: false }, title: { display: true, text: `Quantity${um ? ' (' + um + ')' : ''}`, color: '#2b8a74' }, ticks: { color: '#2b8a74' } } } } });
+}
 function overview(sc) {
+  trendChart();
   const withSales = sc.st.filter(s => s.pct != null);
   const cnt = { high: 0, ok: 0, low: 0 };
   withSales.forEach(s => cnt[statusOf(s.pct)]++);
@@ -438,6 +625,7 @@ function stores(sc) {
   const cols = [
     { k: 'name', h: 'Store', f: s => esc(s.name), def: false },
     { k: 'am', h: 'Area manager', f: s => esc(s.am) },
+    { k: 'rom', h: 'Regional manager', f: s => esc(s.rom || '–') },
     { k: 'sales', h: 'Net sales', f: s => fmt(s.sales) },
     { k: 'waste', h: 'Waste value', f: s => fmt(s.waste) },
     { k: 'pct', h: 'Waste %', f: s => pbar(s.pct, Math.max(...sc.st.map(x => x.pct || 0))), def: true, sort: s => s.pct ?? -1 },
@@ -457,7 +645,7 @@ const hc = (v, max, txt) => v > 0 ? `<span class="hc" style="--h:${Math.min(1, v
 function fcRows() {
   const wks = fcWeeks(), map = new Map();
   for (const wk of wks) for (const [key, s] of weekStores(state.weekCache.get(wk))) {
-    if ((state.am && s.am !== state.am) || !(s.waste > 0)) continue;
+    if (!inScope(s) || !(s.waste > 0)) continue;
     const r = map.get(key) || { key, name: s.name, am: s.am, w: {}, total: 0 };
     r.w[wk] = (r.w[wk] || 0) + s.waste; r.total += s.waste; map.set(key, r);
   }
@@ -470,22 +658,18 @@ function fcRows() {
   return { rows, wks };
 }
 function storewaste() {
-  document.querySelectorAll('#fcViewSeg button').forEach(b => b.setAttribute('aria-pressed', b.dataset.fcv === fc.tabView));
-  const red = fc.tabView === 'reduce';
-  $('redCtl').hidden = !red; $('fcDownloadAll').hidden = !red;
-  $('fcHint').textContent = red ? '' : 'Stores ranked by waste value, highest first, with every stored week side by side. Click a store to see which items create the waste, by week or by day.';
+  $('fcHint').textContent = 'Stores ranked by waste value, highest first, with every stored week side by side. Click a store to see which items create the waste, by week or by day.';
   const need = state.weeks.filter(w => !state.weekCache.has(w.week_key));
   if (need.length && !state.wkLoading && !state.wkError) {
     state.wkLoading = true; state.wkError = false;
     loadAllWeeks().then(() => { state.wkLoading = false; if (state.tab === 'storewaste') render(); })
       .catch(() => { state.wkLoading = false; state.wkError = true; if (state.tab === 'storewaste') render(); });
   }
-  if (red) return renderReduceTab(need);
   const { rows: all, wks } = fcRows(), q = norm($('fcSearch').value), rows = all.filter(r => !q || norm(r.name + ' ' + r.am).includes(q));
   const total = all.reduce((s, r) => s + r.total, 0), top = all[0];
   const kp = (l, v, s = '') => `<div class="kpi"><div class="l">${l}</div><div class="v">${v}</div><div class="s">${s}</div></div>`;
   $('fcKpis').innerHTML = kp('Waste value', fmt(total), `${wks.length} week${wks.length === 1 ? '' : 's'} stored`) + kp('Average per week', fmt(wks.length ? total / wks.length : 0), 'all stores in view') +
-    kp('Stores with waste', all.length, state.am || 'all area managers') + kp('Highest store', top ? fmt(top.total) : '–', top ? esc(top.name) : '');
+    kp('Stores with waste', all.length, state.am || state.rm || 'all area managers') + kp('Highest store', top ? fmt(top.total) : '–', top ? esc(top.name) : '');
   $('fcStatus').textContent = state.wkError ? 'Some weeks could not be loaded.' : need.length ? `Loading ${need.length} more week${need.length === 1 ? '' : 's'}…` : wks.length < 2 ? 'Upload more weeks to compare weeks and see trends.' : '';
   const maxByWeek = Object.fromEntries(wks.map(k => [k, Math.max(0, ...rows.map(r => r.w[k] || 0))])), maxTotal = Math.max(0, ...rows.map(r => r.total));
   const cols = [
@@ -500,99 +684,6 @@ function storewaste() {
   else table($('tblFc'), cols, rows, 'fc', r => openStoreForecast(r));
   state.fcExport = { rows, wks };
 }
-// ---------- reduce by: order / make X less per day, based on the past 7 days of waste ----------
-function weekDaySet(w) { if (!w._daySet) { const s = new Set(); for (const r of w.records) if (r.day != null) s.add(r.day); w._daySet = s; } return w._daySet; }
-const COUNTABLE = /^(pcs?|pieces?|box(es)?|packs?|units?|ea|each|bags?|trays?)$/i;
-const uName = um => { const u = String(um || '').trim(); return /^(l|ltr|liter|litre)s?$/i.test(u) ? 'L' : u || 'units'; };
-const qtyTxt = (v, um) => COUNTABLE.test(String(um || '').trim()) ? (v < 0.5 ? '<1' : fmt(Math.round(v))) : (v < 0.05 ? '<0.1' : v >= 100 ? fmt(v, 0) : fmt(v, 1));
-const withUnit = (v, um) => `${qtyTxt(v, um)} ${esc(uName(um))}`;
-function reduceCalc() {
-  const wks = fcWeeks(); if (!wks.length) return null;
-  const present = new Set(); wks.forEach(k => weekDaySet(state.weekCache.get(k)).forEach(d => present.add(d)));
-  if (!present.size) return null;
-  const latest = Math.max(...present), days = []; for (let d = latest - 6; d <= latest; d++) days.push(d);
-  const div = Math.max(1, days.filter(d => present.has(d)).length), f = Math.max(1, Math.min(100, fc.pct)) / 100, map = new Map();
-  for (const wk of [...wks].reverse()) for (const [sk, s] of weekStores(state.weekCache.get(wk))) {
-    if (state.am && s.am !== state.am) continue;
-    for (const [pk, p] of s.prod) for (let i = 0; i < 7; i++) {
-      const x = p.days.get(days[i]); if (!x || !(x.qty > 0)) continue;
-      const key = sk + '|' + pk; let r = map.get(key);
-      if (!r) map.set(key, r = { sk, key: sk, store: s.name, am: s.am, item: p.name, um: p.um, cat: p.cat, qty: 0, val: 0, nd: 0, dq: [0, 0, 0, 0, 0, 0, 0], seen: new Set() });
-      if (r.seen.has(days[i])) continue; r.seen.add(days[i]); r.qty += x.qty; r.val += x.value; r.nd++; r.dq[i] += x.qty;
-    }
-  }
-  const rows = [...map.values()].filter(r => r.nd >= fc.minDays).map(r => {
-    const unit = r.qty ? r.val / r.qty : 0; r.avg = r.qty / div; r.cut = r.avg * f; r.cutDays = r.dq.map(v => v * f); r.save = r.cut * 7 * unit; return r;
-  });
-  const st = new Map();
-  for (const r of rows) { const s = st.get(r.sk) || { sk: r.sk, key: r.sk, name: r.store, am: r.am, n: 0, val: 0, save: 0 }; s.n++; s.val += r.val; s.save += r.save; st.set(r.sk, s); }
-  const stores = [...st.values()].sort((x, y) => y.save - x.save); stores.forEach((s, i) => { s.rank = i + 1; });
-  const iso0 = dayISO(days[0]), iso1 = dayISO(days[6]);
-  const dayLabels = days.map(d => { const iso = dayISO(d); return `${DOW[new Date(iso + 'T00:00:00Z').getUTCDay()]} ${+iso.slice(8)}`; });
-  return { rows, stores, div, f, days, dayLabels, label: `${fmtDay(iso0, iso0.slice(0, 4) !== iso1.slice(0, 4))} – ${fmtDay(iso1, true)}`, total: stores.reduce((s, x) => s + x.save, 0) };
-}
-const redNote = c => `for each item we take what was wasted in the last 7 days (${c.label}), work out the average waste on one day${c.div < 7 ? ` (using the ${c.div} days of data available)` : ''}, and reduce it by ${Math.round(c.f * 100)}%. Example: if a store throws away 60 pcs on an average day, the advice is to make or order 51 pcs less each day.`;
-function renderReduceTab(need) {
-  const c = reduceCalc(), q = norm($('fcSearch').value);
-  const kp = (l, v, s = '') => `<div class="kpi"><div class="l">${l}</div><div class="v${String(v).length > 12 ? ' vl' : ''}">${v}</div><div class="s">${s}</div></div>`;
-  $('fcStatus').textContent = state.wkError ? 'Some weeks could not be loaded.' : need.length ? `Loading ${need.length} more week${need.length === 1 ? '' : 's'}…` : '';
-  if (!c || !c.stores.length) {
-    $('fcKpis').innerHTML = ''; state.fcExport = { kind: 'reduce', stores: [], c: null };
-    $('tblFc').innerHTML = `<tbody><tr><td class="muted" style="text-align:center;padding:32px">${need.length ? 'Loading weeks…' : 'No items match. Try a lower number of days.'}</td></tr></tbody>`; return;
-  }
-  $('fcHint').textContent = 'How it works: ' + redNote(c);
-  $('fcKpis').innerHTML = kp('Saving per week', fmt(c.total), `by reducing ${Math.round(c.f * 100)}% of average daily waste`) +
-    kp('Stores', c.stores.length, state.am || 'all area managers') + kp('Items to reduce', fmt(c.rows.length), `wasted on ${fc.minDays}+ of the last 7 days`) + kp('Based on', c.label, `${c.div} day${c.div === 1 ? '' : 's'} of data`);
-  const stores = c.stores.filter(s => !q || norm(s.name + ' ' + s.am).includes(q));
-  const cols = [
-    { k: 'name', h: 'Store', f: s => `<span class="rk">${s.rank}</span>${esc(s.name)}`, sort: s => s.name },
-    { k: 'am', h: 'Area manager', f: s => esc(s.am) },
-    { k: 'n', h: 'Items to reduce', f: s => s.n },
-    { k: 'val', h: 'Waste last 7 days', f: s => fmt(s.val) },
-    { k: 'save', h: 'Saving per week', f: s => `<b>${fmt(s.save)}</b>`, def: true }
-  ];
-  if (!stores.length) $('tblFc').innerHTML = '<tbody><tr><td class="muted" style="text-align:center;padding:32px">No store matches your search.</td></tr></tbody>';
-  else table($('tblFc'), cols, stores, 'red', s => openStoreForecast(s, 'reduce'));
-  state.fcExport = { kind: 'reduce', stores, c };
-}
-function reduceModalHtml(m) {
-  const c = reduceCalc(), rows = c ? c.rows.filter(r => r.sk === fc.key).sort((x, y) => y.save - x.save) : [];
-  const head = `<h2>${esc(m.info.name)}</h2><div class="muted">${esc(m.info.am)}${m.info.rom ? ' · ROM ' + esc(m.info.rom) : ''}${m.info.city ? ' · ' + esc(m.info.city) : ''}</div>`;
-  const ctl = `<div class="fc-controls">${fcSeg('view', FC_VIEWS)}${rows.length ? fcSeg('redView', [['avg', 'Reduce by'], ['days', 'Each day']]) : ''}<button type="button" class="btn fc-dl" data-fc="download">↓ Excel</button></div>`;
-  if (!c || !rows.length) return head + ctl + `<p class="muted">Nothing to reduce for this store${fc.minDays > 1 ? ` (only showing items wasted on ${fc.minDays}+ of the last 7 days)` : ''}.</p>`;
-  const pct = Math.round(c.f * 100), total = rows.reduce((s, r) => s + r.save, 0);
-  const sum = `<p class="fc-sum">Reduce these <b>${rows.length}</b> item${rows.length === 1 ? '' : 's'} by <b>${pct}%</b> of what is wasted on an average day. Saving about <b>${fmt(total)}</b> per week.</p>`;
-  let table;
-  if (fc.redView === 'days') {
-    table = `<div class="mx"><table><thead><tr><th>Item</th>${c.dayLabels.map(l => `<th>${esc(l)}</th>`).join('')}</tr></thead><tbody>${rows.map(r =>
-      `<tr><td class="it">${esc(r.item)} <small>${esc(uName(r.um))}</small></td>${r.cutDays.map((v, i) => `<td>${r.dq[i] > 0 ? `<span class="cutpill sm">${qtyTxt(v, r.um)}</span>` : '<span class="dim">–</span>'}</td>`).join('')}</tr>`).join('')}</tbody></table></div>
-      <p class="muted small">Each number is the amount to reduce on that day: ${pct}% of what was wasted on that day in the last 7 days.</p>`;
-  } else {
-    const strip = r => { const mx = Math.max(...r.dq, 0.0001); return `<span class="stripwrap" role="img" aria-label="Waste per day: ${c.dayLabels.map((l, i) => `${l} ${qtyTxt(r.dq[i], r.um)}`).join(', ')}"><span class="strip">${r.dq.map((v, i) => `<i class="sb${v > 0 ? '' : ' z'}" style="--h:${(v / mx).toFixed(2)}" title="${esc(c.dayLabels[i])}: ${qtyTxt(v, r.um)} ${esc(uName(r.um))}"></i>`).join('')}</span><span class="strip lbl" aria-hidden="true">${c.dayLabels.map(l => `<b>${esc(l.slice(0, 1))}</b>`).join('')}</span></span>`; };
-    table = `<div class="mx"><table><thead><tr><th>Item</th><th>Days wasted</th><th>Average waste per day</th><th>Reduce by (per day)</th><th>Waste on each of the last 7 days</th></tr></thead><tbody>${rows.map(r =>
-      `<tr><td class="it">${esc(r.item)}</td><td>${r.nd} of 7</td><td>${withUnit(r.avg, r.um)}</td><td><span class="cutpill">${withUnit(r.cut, r.um)}</span></td><td class="stripcell">${strip(r)}</td></tr>`).join('')}</tbody></table></div>
-      <p class="muted small">Reduce by = ${pct}% of the average waste per day. Bars show how much was wasted on each day (${esc(c.label)}).</p>`;
-  }
-  return head + sum + ctl + table;
-}
-function reduceExportRows(c, filterFn) {
-  const r2 = v => Math.round(v * 100) / 100, pct = Math.round(c.f * 100);
-  return [['Store', 'Area manager', 'Item', 'Unit', 'Category', 'Days wasted (of 7)', 'Waste last 7 days', 'Average waste per day', `Reduce by per day (${pct}%)`, ...c.dayLabels.map(l => 'Reduce on ' + l), 'Saving per week'],
-    ...c.rows.filter(filterFn).sort((x, y) => y.save - x.save).map(r => [r.store, r.am, r.item, uName(r.um), r.cat, r.nd, r2(r.qty), r2(r.avg), r2(r.cut), ...r.cutDays.map(r2), r2(r.save)])];
-}
-function downloadFcTable() {
-  if (fc.tabView === 'reduce') {
-    const { stores, c } = state.fcExport || {}; if (!c) return;
-    const aoa = [['Rank', 'Store', 'Area manager', 'Items to reduce', 'Waste last 7 days', 'Saving per week'],
-      ...stores.map(s => [s.rank, s.name, s.am, s.n, Math.round(s.val * 100) / 100, Math.round(s.save * 100) / 100])];
-    const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), 'Reduce by - stores'); saveWB(wb, 'Reduce_by_stores.xlsx'); return;
-  }
-  downloadRankTable();
-}
-function downloadReduceItems() {
-  const c = reduceCalc(); if (!c) return; const q = norm($('fcSearch').value);
-  const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(reduceExportRows(c, r => !q || norm(r.store + ' ' + r.am).includes(q))), 'Reduce by - items'); saveWB(wb, 'Reduce_by_items.xlsx');
-}
 function downloadRankTable() {
   const { rows, wks } = state.fcExport || { rows: [], wks: [] };
   const aoa = [['Rank', 'Store', 'Area manager', ...wks.map(k => 'Week ' + weekLabel(k, (state.weeks.find(w => w.week_key === k) || {}).meta)), 'Total', 'Average per week', 'Last vs previous week %'],
@@ -601,7 +692,7 @@ function downloadRankTable() {
 }
 
 // store detail: items by week or by day (value or quantity)
-const fc = { key: '', mode: 'week', metric: 'value', dayWeek: '', tabView: 'rank', pct: 85, redView: 'avg', minDays: 1 };
+const fc = { key: '', mode: 'week', metric: 'value', dayWeek: '' };
 function openStoreForecast(row, mode) {
   fc.key = row.key; fc.mode = mode || 'week'; fc.metric = 'value'; const w = fcWeeks(); fc.dayWeek = w[w.length - 1] || '';
   openModal(fcModalHtml(), { wide: true });
@@ -637,12 +728,10 @@ function fcModel() {
   const foot = fc.metric === 'value' ? cols.map((c, i) => rows.reduce((s, r) => s + r.vals[i], 0)) : null;
   return { wks, cols, rows, foot, info, avgLabel, storeW, scopeTotal };
 }
-const fcSeg = (name, opts) => `<div class="seg" role="group" aria-label="${name === 'redView' ? 'Reduce by view' : name}">${opts.map(([v, l]) => `<button type="button" data-fc="${name}:${v}" aria-pressed="${fc[name === 'view' ? 'mode' : name] === v}">${l}</button>`).join('')}</div>`;
-const FC_VIEWS = [['week', 'By week'], ['day', 'By day'], ['reduce', 'Reduce by']];
+const FC_VIEWS = [['week', 'By week'], ['day', 'By day']];
 function fcModalHtml() {
   const m = fcModel();
   if (!m.info) return '<h2>No data</h2><p class="muted">This store has no waste in the stored weeks.</p>';
-  if (fc.mode === 'reduce') return reduceModalHtml(m);
   const nf = v => v > 0 ? (fc.metric === 'qty' ? fmt(v, 1) : fmt(v)) : '<span class="dim">–</span>';
   const max = Math.max(0, ...m.rows.flatMap(r => r.vals));
   const seg = (name, opts) => `<div class="seg" role="group" aria-label="${name}">${opts.map(([v, l]) => `<button type="button" data-fc="${name}:${v}" aria-pressed="${fc[name === 'view' ? 'mode' : name] === v}">${l}</button>`).join('')}</div>`;
@@ -651,7 +740,7 @@ function fcModalHtml() {
   const heads = m.cols.map(c => `<th>${esc(c.label)}</th>`).join('');
   const body = m.rows.map(r => `<tr><td class="it">${esc(r.name)} <small>${esc(r.um)}</small></td><td class="cat">${esc(r.cat)}</td>${r.vals.map(v => `<td>${v > 0 ? `<span class="hc" style="--h:${Math.min(1, v / (max || 1)).toFixed(2)}">${nf(v)}</span>` : nf(v)}</td>`).join('')}<td class="tot">${nf(r.total)}</td><td>${nf(r.avg)}</td><td>${r.share == null ? '' : (r.share * 100).toFixed(1) + '%'}</td></tr>`).join('');
   const foot = m.foot ? `<tfoot><tr><td class="it">All items</td><td></td>${m.foot.map(v => `<td>${nf(v)}</td>`).join('')}<td class="tot">${nf(m.foot.reduce((s, v) => s + v, 0))}</td><td>${nf(m.foot.reduce((s, v) => s + v, 0) / (m.cols.length || 1))}</td><td></td></tr></tfoot>` : '';
-  return `<h2>${esc(m.info.name)}</h2><div class="muted">${esc(m.info.am)}${m.info.rom ? ' · ROM ' + esc(m.info.rom) : ''}${m.info.city ? ' · ' + esc(m.info.city) : ''}</div>
+  return `<h2>${esc(m.info.name)}</h2><div class="muted">${esc(m.info.am)}${m.info.rom ? ' · Regional manager ' + esc(m.info.rom) : ''}${m.info.city ? ' · ' + esc(m.info.city) : ''}</div>
     <p class="fc-sum">Waste value <b>${fmt(allTotal)}</b> over ${nW} week${nW === 1 ? '' : 's'} · average <b>${fmt(allTotal / nW)}</b> per week</p>
     <div class="fc-controls">${seg('view', FC_VIEWS)}${seg('metric', [['value', 'Waste value'], ['qty', 'Quantity']])}
       ${fc.mode === 'day' ? `<label class="fc-wk">Week <select data-fc-week aria-label="Week for the day view">${wkOpts}</select></label>` : ''}
@@ -666,10 +755,6 @@ function refreshFcModal(focusSel) {
 }
 function downloadFcModal() {
   const m = fcModel(); if (!m.info) return;
-  if (fc.mode === 'reduce') {
-    const c = reduceCalc(); if (!c) return;
-    const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(reduceExportRows(c, r => r.sk === fc.key)), 'Reduce by'); saveWB(wb, `${m.info.code || 'store'}_reduce_by.xlsx`); return;
-  }
   const aoa = [['Item', 'Unit', 'Category', ...m.cols.map(c => c.label), 'Total', m.avgLabel, ...(fc.metric === 'value' ? ['Share %'] : [])],
     ...m.rows.map(r => [r.name, r.um, r.cat, ...r.vals.map(v => Math.round(v * 100) / 100), Math.round(r.total * 100) / 100, Math.round(r.avg * 100) / 100, ...(r.share == null ? [] : [Math.round(r.share * 1000) / 10])])];
   const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), 'Items');
@@ -679,27 +764,24 @@ $('modalBody').addEventListener('click', e => {
   const b = e.target.closest('[data-fc]'); if (!b) return;
   const [k, v] = b.dataset.fc.split(':');
   if (k === 'download') return downloadFcModal();
-  if (k === 'view') fc.mode = v; if (k === 'metric') fc.metric = v; if (k === 'redView') fc.redView = v;
+  if (k === 'view') fc.mode = v; if (k === 'metric') fc.metric = v;
   refreshFcModal(`[data-fc="${b.dataset.fc}"]`);
 });
 $('modalBody').addEventListener('change', e => { if (e.target.matches('[data-fc-week]')) { fc.dayWeek = e.target.value; refreshFcModal('[data-fc-week]'); } });
-$('fcDownload').onclick = downloadFcTable;
-$('fcDownloadAll').onclick = downloadReduceItems;
-$('fcViewSeg').onclick = e => { const b = e.target.closest('[data-fcv]'); if (b) { fc.tabView = b.dataset.fcv; setPref('tabView', fc.tabView); render(); } };
-const clampPct = v => Math.max(1, Math.min(100, Math.round(+v || 0)));
-$('redPct').onchange = e => { fc.pct = clampPct(e.target.value); e.target.value = fc.pct; setPref('pct', fc.pct); render(); };
-$('redDays').onchange = e => { fc.minDays = +e.target.value || 1; setPref('minDays', fc.minDays); render(); };
+$('fcDownload').onclick = downloadRankTable;
 
 function products(sc) {
   const sel = $('prodCat'), cur = sel.value;
   sel.innerHTML = '<option value="">All categories</option>' + sc.cats.map(c => `<option>${esc(c)}</option>`).join(''); sel.value = cur;
   const q = norm($('prodSearch').value);
   const rows = sc.prods.filter(p => (!sel.value || p.cat === sel.value) && (!q || norm(p.name + p.code).includes(q)))
-    .map(p => ({ ...p, pctSales: sc.sales > 0 ? p.value / sc.sales : null, share: sc.waste ? p.value / sc.waste : 0 }));
+    .map(p => ({ ...p, avgq: p.stores ? p.qty / p.stores : 0, avgv: p.stores ? p.value / p.stores : 0, pctSales: sc.sales > 0 ? p.value / sc.sales : null, share: sc.waste ? p.value / sc.waste : 0 }));
   table($('tblProducts'), [
     { k: 'name', h: 'Product', f: p => esc(p.name) }, { k: 'code', h: 'Code', f: p => esc(p.code) }, { k: 'cat', h: 'Category', f: p => esc(p.cat) },
     { k: 'qty', h: 'Qty', f: p => `${fmt(p.qty, 1)} ${esc(p.um)}` }, { k: 'stores', h: 'Stores', f: p => p.stores },
+    { k: 'avgq', h: 'Avg qty / store', f: p => `${fmt(p.avgq, 1)} ${esc(p.um)}` },
     { k: 'value', h: 'Waste value', f: p => fmt(p.value), def: true },
+    { k: 'avgv', h: 'Avg value / store', f: p => fmt(p.avgv, 1) },
     { k: 'pctSales', h: '% of net sales', f: p => pct(p.pctSales, 3), sort: p => p.pctSales ?? -1 },
     { k: 'share', h: '% of total waste', f: p => pct(p.share) }
   ], rows, 'products', p => productModal(p, sc));
@@ -731,21 +813,82 @@ function extremes(sc) {
 }
 
 function managers() {
-  const map = new Map();
-  for (const s of state.stores.filter(s => s.waste > 0 || s.sales > 0)) {
-    const m = map.get(s.am) || { am: s.am, rom: s.rom, stores: 0, sales: 0, waste: 0, high: 0, low: 0 };
-    m.stores++; m.sales += s.sales; m.waste += s.waste;
-    const st = statusOf(s.sales > 0 ? s.waste / s.sales : null); if (st === 'high') m.high++; if (st === 'low') m.low++;
-    map.set(s.am, m);
-  }
-  const rows = [...map.values()].map(m => ({ ...m, pct: m.sales > 0 ? m.waste / m.sales : null }));
-  table($('tblManagers'), [
-    { k: 'am', h: 'Area manager', f: m => esc(m.am) }, { k: 'rom', h: 'ROM', f: m => esc(m.rom) }, { k: 'stores', h: 'Stores', f: m => m.stores },
-    { k: 'sales', h: 'Net sales', f: m => fmt(m.sales) }, { k: 'waste', h: 'Waste value', f: m => fmt(m.waste) },
-    { k: 'pct', h: 'Waste %', f: m => pcell(m.pct), def: true, sort: m => m.pct ?? -1 },
-    { k: 'high', h: 'High stores', f: m => m.high }, { k: 'low', h: 'Low stores', f: m => m.low }
-  ], rows, 'managers', m => { $('amSelect').value = m.am === 'Unassigned' ? '' : m.am; state.am = $('amSelect').value; state.tab = 'overview'; render(); });
+  const base = state.stores.filter(s => (s.waste > 0 || s.sales > 0) && (!state.rm || s.rom === state.rm));
+  const group = (keyOf, init) => {
+    const map = new Map();
+    for (const s of base) {
+      const k = keyOf(s), m = map.get(k) || init(s);
+      m.stores++; m.sales += s.sales; m.waste += s.waste; m._am.add(s.am);
+      const st = statusOf(s.sales > 0 ? s.waste / s.sales : null); if (st === 'high') m.high++; if (st === 'low') m.low++;
+      map.set(k, m);
+    }
+    return [...map.values()].map(m => ({ ...m, ams: m._am.size, pct: m.sales > 0 ? m.waste / m.sales : null }));
+  };
+  const nums = [{ k: 'stores', h: 'Stores', f: m => m.stores }, { k: 'sales', h: 'Net sales', f: m => fmt(m.sales) }, { k: 'waste', h: 'Waste value', f: m => fmt(m.waste) },
+    { k: 'pct', h: 'Waste %', f: m => pcell(m.pct), def: true, sort: m => m.pct ?? -1 }, { k: 'high', h: 'High stores', f: m => m.high }, { k: 'low', h: 'Low stores', f: m => m.low }];
+  const rms = group(s => s.rom || '–', s => ({ rm: s.rom || '–', stores: 0, sales: 0, waste: 0, high: 0, low: 0, _am: new Set() }));
+  table($('tblRegions'), [{ k: 'rm', h: 'Regional manager', f: m => esc(m.rm) }, { k: 'ams', h: 'Area managers', f: m => m.ams }, ...nums], rms, 'regions',
+    m => { if (m.rm === '–') return; state.rm = m.rm; state.am = ''; setPref('rm', state.rm); setPref('am', ''); fillManagers(); state.tab = 'overview'; render(); });
+  const ams = group(s => s.am, s => ({ am: s.am, rom: s.rom, stores: 0, sales: 0, waste: 0, high: 0, low: 0, _am: new Set() }));
+  table($('tblManagers'), [{ k: 'am', h: 'Area manager', f: m => esc(m.am) }, { k: 'rom', h: 'Regional manager', f: m => esc(m.rom || '–') }, ...nums], ams, 'managers',
+    m => { state.am = m.am === 'Unassigned' ? '' : m.am; setPref('am', state.am); fillManagers(); state.tab = 'overview'; render(); });
 }
+
+// ---------- area manager remarks (anyone can add, only the admin login can read) ----------
+const NAME_KEY = 'hmRemarkName';
+function remarkDialog() {
+  let saved = ''; try { saved = localStorage.getItem(NAME_KEY) || ''; } catch (e) {}
+  openModal(`<h2>Add a remark</h2>
+    <p class="muted">Your remark goes to the admin only. Other users will not see it.</p>
+    <div class="rem-form">
+      <label>Your name<input type="text" id="remName" maxlength="80" autocomplete="name" value="${esc(saved)}"></label>
+      <label>Remark<textarea id="remText" maxlength="2000" placeholder="Write your remark…"></textarea></label>
+      <div class="delrow"><button type="button" class="btn" id="remCancel">Cancel</button><button type="button" class="btn primary" id="remSend">Send remark</button></div>
+      <div id="remMsg" class="small gate-msg" aria-live="polite"></div>
+    </div>`);
+  (saved ? $('remText') : $('remName')).focus();
+  $('remCancel').onclick = closeModal;
+  $('remSend').onclick = async () => {
+    const name = clean($('remName').value), text = $('remText').value.trim(), msg = $('remMsg'), btn = $('remSend');
+    if (!name) { msg.textContent = 'Please enter your name.'; $('remName').focus(); return; }
+    if (!text) { msg.textContent = 'Please write a remark.'; $('remText').focus(); return; }
+    btn.disabled = true; msg.textContent = 'Sending…';
+    try {
+      await rpc('add_remark', { p_password: state.viewPass, p_name: name, p_remark: text });
+      try { localStorage.setItem(NAME_KEY, name); } catch (e) {}
+      state.remarks = null; closeModal(); toast('✓ Remark sent. Thank you.');
+      if (state.tab === 'remarks') render();
+    } catch (e) {
+      msg.textContent = e.code === 'auth' ? 'Your login has expired. Reload the page and enter the password again.' : 'Not sent. Check your connection and try again.';
+      btn.disabled = false;
+    }
+  };
+}
+async function loadRemarks() {
+  state.remLoading = true; $('remStatus').textContent = 'Loading…';
+  try { state.remarks = await rpc('get_remarks', { p_passcode: state.viewPass }); $('remStatus').textContent = ''; }
+  catch (e) { state.remarks = state.remarks || []; $('remStatus').textContent = 'Could not load remarks. Try Refresh.'; }
+  state.remLoading = false; if (state.tab === 'remarks') render();
+}
+function remarks() {
+  $('period').textContent = 'Remarks from area managers';
+  if (!state.remarks) { if (!state.remLoading) loadRemarks(); $('tblRemarks').innerHTML = '<tbody><tr><td class="muted" style="text-align:center;padding:32px">Loading remarks…</td></tr></tbody>'; return; }
+  const q = norm($('remSearch').value), rows = state.remarks.filter(r => !q || norm(r.name + ' ' + r.remark).includes(q));
+  if (!rows.length) { $('tblRemarks').innerHTML = `<tbody><tr><td class="muted" style="text-align:center;padding:32px">${state.remarks.length ? 'No remark matches your search.' : 'No remarks yet.'}</td></tr></tbody>`; return; }
+  const when = t => new Date(t).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' });
+  $('tblRemarks').innerHTML = `<thead><tr><th>Date</th><th>Name</th><th>Remark</th><th></th></tr></thead><tbody>${rows.map(r =>
+    `<tr><td>${esc(when(r.created_at))}</td><td style="text-align:left">${esc(r.name)}</td><td class="rem">${esc(r.remark)}</td><td><button type="button" class="btn danger" data-del-remark="${r.id}">Delete</button></td></tr>`).join('')}</tbody>`;
+}
+$('btnRemark').onclick = remarkDialog;
+$('remRefresh').onclick = () => { state.remarks = null; render(); };
+$('remSearch').oninput = render;
+$('tblRemarks').onclick = async e => {
+  const b = e.target.closest('[data-del-remark]'); if (!b) return;
+  if (!confirm('Delete this remark? This cannot be undone.')) return;
+  b.disabled = true;
+  try { await rpc('delete_remark', { p_passcode: state.viewPass, p_id: +b.dataset.delRemark }); state.remarks = state.remarks.filter(r => r.id !== +b.dataset.delRemark); render(); toast('✓ Remark deleted.'); }
+  catch (err) { b.disabled = false; toast('Not deleted. Check your connection and try again.'); }
+};
 
 // ---------- modals ----------
 let modalReturn = null;
@@ -767,15 +910,19 @@ function closeModal() {
 function storeModal(s) {
   const cats = Object.keys(s.cat).sort((a, b) => s.cat[b] - s.cat[a]);
   const prods = [...s.prod.values()].sort((a, b) => b.value - a.value).slice(0, 15);
-  openModal(`<h2>${esc(s.name)}</h2><div class="muted">${esc(s.am)}${s.rom ? ' · ROM ' + esc(s.rom) : ''}${s.city ? ' · ' + esc(s.city) : ''}</div>
+  const avg = new Map(scope().prods.map(p => [p.key, p.stores ? p.qty / p.stores : 0]));
+  const qcell = p => { const v = avg.get(p.key) || 0; return `<span class="${p.qty > v * 1.001 && v > 0 ? 't-high' : ''}">${fmt(p.qty, 1)} ${esc(p.um)}</span>`; };
+  openModal(`<h2>${esc(s.name)}</h2><div class="muted">${esc(s.am)}${s.rom ? ' · Regional manager ' + esc(s.rom) : ''}${s.city ? ' · ' + esc(s.city) : ''}</div>
     <p>Net sales <b>${fmt(s.sales)}</b> · Waste <b>${fmt(s.waste)}</b> · Waste % <b>${pcell(s.pct)}</b> ${chip(statusOf(s.pct))}</p>
     <h3>By category</h3><table><thead><tr><th>Category</th><th>Value</th><th>% of sales</th></tr></thead><tbody>${cats.map(c => `<tr><td>${esc(c)}</td><td>${fmt(s.cat[c])}</td><td>${s.sales > 0 ? pct(s.cat[c] / s.sales) : '–'}</td></tr>`).join('')}</tbody></table>
-    <h3>Top products</h3><table><thead><tr><th>Product</th><th>Category</th><th>Qty</th><th>Value</th><th>% of sales</th></tr></thead><tbody>${prods.map(p => `<tr><td>${esc(p.name)}</td><td>${esc(p.cat)}</td><td>${fmt(p.qty, 1)} ${esc(p.um)}</td><td>${fmt(p.value)}</td><td>${s.sales > 0 ? pct(p.value / s.sales, 3) : '–'}</td></tr>`).join('')}</tbody></table>`);
+    <h3>Top products</h3><table><thead><tr><th>Product</th><th>Category</th><th>Qty</th><th>Avg qty / store</th><th>Value</th><th>% of sales</th></tr></thead><tbody>${prods.map(p => `<tr><td>${esc(p.name)}</td><td>${esc(p.cat)}</td><td>${qcell(p)}</td><td>${fmt(avg.get(p.key) || 0, 1)} ${esc(p.um)}</td><td>${fmt(p.value)}</td><td>${s.sales > 0 ? pct(p.value / s.sales, 3) : '–'}</td></tr>`).join('')}</tbody></table>
+    <p class="muted small">Avg qty / store = total quantity of the item ÷ number of stores that wasted it. Red means this store is above that average.</p>`);
 }
 function productModal(p, sc) {
   const rows = sc.st.filter(s => s.prod.has(p.key)).map(s => ({ s, p: s.prod.get(p.key) })).sort((a, b) => b.p.value - a.p.value);
   openModal(`<h2>${esc(p.name)}</h2><div class="muted">${esc(p.cat)} · ${esc(p.code)}</div>
     <p>Total waste <b>${fmt(p.value)}</b> · Qty <b>${fmt(p.qty, 1)} ${esc(p.um)}</b> · <b>${pct(sc.sales ? p.value / sc.sales : null, 3)}</b> of net sales · ${p.stores} store(s)</p>
+    <p>Average per store: <b>${fmt(p.stores ? p.qty / p.stores : 0, 1)} ${esc(p.um)}</b> · <b>${fmt(p.stores ? p.value / p.stores : 0, 1)}</b> value</p>
     <table><thead><tr><th>Store</th><th>Qty</th><th>Value</th><th>% of store sales</th></tr></thead><tbody>${rows.map(({ s, p: q }) => `<tr><td>${esc(s.name)}</td><td>${fmt(q.qty, 1)}</td><td>${fmt(q.value)}</td><td>${s.sales > 0 ? pct(q.value / s.sales, 3) : '–'}</td></tr>`).join('')}</tbody></table>`);
 }
 
@@ -854,6 +1001,11 @@ $('fileMap').onchange = async e => {
   } catch (err) { notice('Mapping file: ' + err.message); }
 };
 $('amSelect').onchange = e => { state.am = e.target.value; setPref('am', state.am); render(); };
+$('trendItem').addEventListener('change', e => pickItem(e.target.value));
+$('trendItem').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); pickItem(e.target.value); } });
+$('trendItem').addEventListener('input', e => { if (!e.target.value) pickItem(''); });
+$('trendClear').onclick = () => pickItem('');
+$('rmSelect').onchange = e => { state.rm = e.target.value; setPref('rm', state.rm); fillManagers(); setPref('am', state.am); render(); };
 $('weekSelect').onchange = e => selectWeek(e.target.value);
 $('emptyRetry').onclick = () => { $('emptyRetry').hidden = true; $('emptyTitle').textContent = 'Loading latest data…'; $('emptyText').textContent = 'Fetching the published dashboard.'; loadShared(state.viewPass); };
 $('btnDeleteWeek').onclick = deleteWeekDialog;
@@ -878,7 +1030,7 @@ $('tabs').onkeydown = e => {
   i = e.key === 'Home' ? 0 : e.key === 'End' ? bs.length - 1 : (i + (e.key === 'ArrowRight' ? 1 : -1) + bs.length) % bs.length;
   e.preventDefault(); state.tab = bs[i].dataset.tab; render(); bs[i].focus();
 };
-{ const t0 = location.hash.slice(1); if (['overview', 'stores', 'storewaste', 'products', 'extremes', 'managers'].includes(t0)) state.tab = t0; }
+{ const t0 = location.hash.slice(1); if (TABS.includes(t0)) state.tab = t0; }
 $('modalClose').onclick = closeModal;
 $('modal').onclick = e => { if (e.target === $('modal')) closeModal(); };
 document.addEventListener('keydown', e => {
@@ -918,4 +1070,5 @@ else {
 }
 loadShared(savedView).finally(() => { splash.dataDone = true; trySplash(); });
 window.__wasteApp = { state, handleWasteFiles };
+window.__wasteReady = true;
 })();
