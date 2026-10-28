@@ -1,7 +1,7 @@
 (() => {
 'use strict';
 // keep in step with <meta name="app-version"> in index.html (change both on every update)
-const APP_VERSION = '2026-10-28-1';
+const APP_VERSION = '2026-10-28-2';
 function showBootFail() {   // works even on an old cached page that lacks the banner
   let f = document.getElementById('bootFail');
   if (!f) {
@@ -428,7 +428,7 @@ const COLORS = { high: '#d9776c', ok: '#84c5b2', low: '#d4b38b', na: '#b9ae9c' }
 const PAL = ['#84c5b2', '#a7ded4', '#d4b38b', '#2b8a74'];
 const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
 const cssv = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
-try { Chart.defaults.color = cssv('--muted'); Chart.defaults.font.family = cssv('--font') || 'system-ui'; Chart.defaults.font.size = 12; Chart.defaults.animation = reduceMotion ? false : { duration: 450, easing: 'easeOutQuart' }; } catch (e) {}
+try { Chart.defaults.color = cssv('--muted'); Chart.defaults.font.family = cssv('--font') || 'system-ui'; Chart.defaults.font.size = 12; Chart.defaults.animation = false; Chart.defaults.responsiveAnimationDuration = 0; } catch (e) {}
 
 function notice(msg) { const n = $('notice'); n.hidden = !msg; n.textContent = msg || ''; }
 
@@ -440,6 +440,18 @@ function render() {
     document.querySelectorAll('.tab').forEach(t => t.hidden = t.id !== 'tab-' + state.tab);
     if (state.records.length) showTabError(e); else $('empty').hidden = false;
   }
+}
+let guardTimer = 0, guardTries = 0;
+function guardCharts() {   // if the browser left the Overview charts undrawn, redraw them (never leave a blank card)
+  clearTimeout(guardTimer);
+  if (state.tab !== 'overview') { guardTries = 0; return; }
+  guardTimer = setTimeout(() => {
+    if (state.tab !== 'overview') return;
+    const blank = [...document.querySelectorAll('#tab-overview canvas')].some(c => {
+      try { if (!c.width || !c.height) return true; const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data; for (let i = 3; i < d.length; i += 64) if (d[i]) return false; return true; } catch (e) { return false; }
+    });
+    if (blank && guardTries < 3) { guardTries++; render(); } else if (!blank) guardTries = 0;
+  }, 350);
 }
 function renderView() {
   killCharts();
@@ -460,6 +472,7 @@ function renderView() {
   if (state.tab !== state.prevTab) { if (state.tab === 'storewaste') state.wkError = false; state.prevTab = state.tab; }
   clearTabError(); setPref('tab', state.tab);
   try { ({ overview, stores, storewaste, products, extremes, managers })[state.tab](sc); } catch (e) { console.error(e); showTabError(e); }
+  guardCharts();
 }
 
 // waste per stored week for the stores in view (follows the regional / area manager filters)
@@ -520,7 +533,8 @@ function pickItem(text) {
   if (!k && state.itemOpts) { const hits = [...state.itemOpts].filter(([l]) => l.includes(t)); if (hits.length === 1) k = hits[0][1]; }
   if (k) { state.trItem = k; $('trendItem').value = state.itemLabel.get(k); render(); }
 }
-const valueLabels = (rows, get) => ({ id: 'barLabels', afterDatasetsDraw(ch) {
+const safePlugin = p => { const f = p.afterDatasetsDraw; p.afterDatasetsDraw = ch => { try { f(ch); } catch (e) { console.warn('chart label skipped', e); } }; return p; };
+const valueLabels = (rows, get) => safePlugin({ id: 'barLabels', afterDatasetsDraw(ch) {
   const { ctx } = ch, meta = ch.getDatasetMeta(0); ctx.save(); ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
   ctx.font = `700 13px ${cssv('--font') || 'sans-serif'}`; ctx.fillStyle = cssv('--ink');
   meta.data.forEach((bar, i) => ctx.fillText(fmt(get(rows[i])), bar.x, bar.y - 6));
@@ -569,7 +583,7 @@ function itemTrendChart() {
       ctx.fillStyle = '#ffffff'; ctx.fillText(t, x, y + 0.5);
     });
     ctx.restore(); } };
-  state.charts.trend = new Chart($('chTrend'), { type: 'bar', plugins: [valueLabels(rows, r => r.value), qtyLabels],
+  state.charts.trend = new Chart($('chTrend'), { type: 'bar', plugins: [valueLabels(rows, r => r.value), safePlugin(qtyLabels)],
     data: { labels: rows.map(r => [r.label, r.range, `${r.stores} store${r.stores === 1 ? '' : 's'}`]),
       datasets: [
         { type: 'bar', label: 'Waste value', yAxisID: 'y', order: 2, data: rows.map(r => Math.round(r.value * 100) / 100), backgroundColor: rows.map(r => sel(r) ? PAL[0] : '#c9e6dd'), borderRadius: 8, borderSkipped: false, maxBarThickness: 90 },
@@ -612,7 +626,7 @@ function overview(sc) {
   const thr = { id: 'thr', afterDatasetsDraw(ch) {
     const { ctx, chartArea: a, scales: { x } } = ch; ctx.save(); ctx.setLineDash([5, 4]); ctx.lineWidth = 1.5;
     [[state.high, COLORS.high], [state.low, COLORS.low]].forEach(([v, col]) => { const px = x.getPixelForValue(v * 100); if (px >= a.left && px <= a.right) { ctx.strokeStyle = col; ctx.beginPath(); ctx.moveTo(px, a.top); ctx.lineTo(px, a.bottom); ctx.stroke(); } }); ctx.restore(); } };
-  state.charts.stores = new Chart($('chStores'), { type: 'bar', plugins: [thr], data: { labels: ss.map(s => s.name.replace(' · ', '  ')), datasets: [{ data: ss.map(s => +(s.pct * 100).toFixed(2)), backgroundColor: ss.map(s => COLORS[statusOf(s.pct)]), borderRadius: 6, borderSkipped: false, barPercentage: .7 }] },
+  state.charts.stores = new Chart($('chStores'), { type: 'bar', plugins: [safePlugin(thr)], data: { labels: ss.map(s => s.name.replace(' · ', '  ')), datasets: [{ data: ss.map(s => +(s.pct * 100).toFixed(2)), backgroundColor: ss.map(s => COLORS[statusOf(s.pct)]), borderRadius: 6, borderSkipped: false, barPercentage: .7 }] },
     options: { ...base, indexAxis: 'y', scales: { x: { grid, border: { display: false }, ticks: { callback: v => v + '%' } }, y: { grid: { display: false }, border: { display: false } } } } });
   const tp = [...sc.prods].sort((a, b) => b.value - a.value).slice(0, 10);
   state.charts.prod = new Chart($('chProd'), { type: 'bar', data: { labels: tp.map(p => p.name.length > 30 ? p.name.slice(0, 29) + '…' : p.name), datasets: [{ data: tp.map(p => Math.round(p.value)), backgroundColor: PAL[0], borderRadius: 6, borderSkipped: false, barPercentage: .7 }] },
